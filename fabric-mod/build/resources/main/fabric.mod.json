@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "dontcam",
+  "version": "0.1.0",
+  "name": "DontCam Client Mod",
+  "description": "Official DontCam Client companion mod: HUD (FPS/CPS/keystrokes), Right-Shift menu, DC badges, custom main menu.",
+  "authors": ["DontCam"],
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.dontcam.fabric.DontCamFabricMod"]
+  },
+  "mixins": ["dontcam.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "fabric-api": "*",
+    "minecraft": "~1.21.1",
+    "java": ">=21"
+  }
+}

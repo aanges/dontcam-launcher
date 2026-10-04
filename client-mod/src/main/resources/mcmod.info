@@ -1,0 +1,16 @@
+[
+  {
+    "modid": "dontcam",
+    "name": "DontCam Client Mod",
+    "description": "Official DontCam Client companion mod: HUD (FPS/CPS/keystrokes), Right-Shift menu, player badges.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "url": "",
+    "updateUrl": "",
+    "authorList": ["DontCam"],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]

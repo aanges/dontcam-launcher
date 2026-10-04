@@ -1,0 +1,38 @@
+# Rust / Tauri
+/target/
+src-tauri/target/
+
+# Frontend
+node_modules/
+dist/
+
+# Signing keys — NEVER commit. Lose the private key = no more updates
+# for users with the app installed.
+*.key
+*.key.pass
+*.pub
+
+# Local env
+.env
+.env.*
+
+# Local tokens — never commit secrets
+*.token
+
+# Gradle caches (mod sources)
+.gradle/
+
+
+# Vendored local JDKs and archives (dev machine only)
+tools/java8/
+tools/java21/
+tools/*.zip
+
+# Local build artifacts at root (releases live on GitHub Releases)
+DontCamClient.exe
+DontCamClient-Setup-*.exe
+
+tools/gradle
+tools/gradle4/
+tools/gradle8/
+

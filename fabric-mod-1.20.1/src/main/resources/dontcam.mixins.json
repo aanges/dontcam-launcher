@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.dontcam.fabric.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [],
+  "client": [
+    "MixinTitleScreen",
+    "MixinPlayerEntityRenderer",
+    "MixinPlayerListHud"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
