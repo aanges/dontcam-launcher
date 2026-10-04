@@ -36,3 +36,9 @@ tools/gradle
 tools/gradle4/
 tools/gradle8/
 
+
+# Compiled mod outputs
+**/build/
+**/out/
+**/.gradle/
+
