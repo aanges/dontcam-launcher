@@ -92,6 +92,7 @@ fn main() {
             modloaders::install_modded,
             dontcam::get_dontcam_releases,
             dontcam::install_dontcam_mod,
+            dontcam::check_dontcam_update,
             java::detect_java,
             java::get_java_installations,
             java::download_java,

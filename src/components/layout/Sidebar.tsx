@@ -1,4 +1,4 @@
-import { Home, Box, UserCog, Puzzle, Settings, Users, Sun, Moon } from 'lucide-react'
+import { Home, Box, UserCog, Settings, Users, Sun, Moon } from 'lucide-react'
 import { cn } from '../../utils/helpers'
 import { LogoTile } from '../Logo'
 import { useThemeStore, useAuthStore } from '../../store/authStore'
@@ -8,7 +8,6 @@ const navigation = [
   { name: 'Home', href: '/', icon: Home },
   { name: 'Versions', href: '/versions', icon: Box },
   { name: 'Profiles', href: '/profiles', icon: UserCog },
-  { name: 'Mods', href: '/mods', icon: Puzzle },
   { name: 'Accounts', href: '/accounts', icon: Users },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]

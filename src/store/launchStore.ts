@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { LaunchStatus, LaunchOptions } from '../types'
 import { launchApi } from '../tauri/api'
+import { useDontcamStore } from './dontcamStore'
 
 interface LaunchState {
   launchStatus: LaunchStatus
@@ -16,6 +17,9 @@ export const useLaunchStore = create<LaunchState>((set) => ({
   launchGame: async (options) => {
     set({ launchStatus: 'launching' })
     try {
+      // DontCam freshness check before EVERY start — no Play can bypass it.
+      // Network trouble never blocks the game (offline: play on local jar).
+      await useDontcamStore.getState().checkDontcamUpdate(options.version_id, options.profile_id || undefined)
       await launchApi.launch(options)
       set({ launchStatus: 'running' })
     } catch (error) {

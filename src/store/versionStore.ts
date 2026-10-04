@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { VersionManifest, VersionInfo, GameVersion, ModLoaderVersion, InstalledModLoader, InstallModdedResult, JavaInstallation } from '../types'
 import { versionApi, modLoaderApi, javaApi } from '../tauri/api'
+import { useDontcamStore } from './dontcamStore'
 
 /** Curated minor lines shown in the picker. Everything else (incl. pre-1.8) is hidden. */
 export const CURATED_MINORS = ['1.8', '1.12', '1.16', '1.17', '1.18', '1.19', '1.20', '1.21']
@@ -86,6 +87,14 @@ export const useVersionStore = create<VersionState>((set, get) => ({
     try {
       const result = await modLoaderApi.installModded(versionId, force, profileId)
       await get().loadInstalledVersions()
+      // Refresh the DontCam jar right after install (backend already staged
+      // one — this only swaps it when MODY has something newer). Must not
+      // fail the install when the network is down.
+      try {
+        await useDontcamStore.getState().checkDontcamUpdate(versionId, profileId)
+      } catch {
+        /* offline — staged mod stays */
+      }
       set((state) => ({
         isInstalling: null,
         installProgress: { ...state.installProgress, [versionId]: 100 },

@@ -5,7 +5,6 @@ import { OnboardingModal } from './components/OnboardingModal'
 import { HomePage } from './pages/HomePage'
 import { VersionsPage } from './pages/VersionsPage'
 import { ProfilesPage } from './pages/ProfilesPage'
-import { ModsPage } from './pages/ModsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { useAuthStore } from './store/authStore'
@@ -49,7 +48,6 @@ export default function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/versions" element={<VersionsPage />} />
         <Route path="/profiles" element={<ProfilesPage />} />
-        <Route path="/mods" element={<ModsPage />} />
         <Route path="/accounts" element={<AccountsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

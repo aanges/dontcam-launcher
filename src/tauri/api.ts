@@ -144,9 +144,9 @@ export const javaApi = {
     invoke('resolve_java_for_version', { versionId }),
 }
 
-// DontCam mod (private aanges/MODY repo) API.
-// Token never touches the frontend: the backend reads GITHUB_TOKEN from env
-// (or the `gh` credential store) and returns friendly 401/404 messages.
+// DontCam mod (public aanges/MODY repo) API.
+// No tokens, no passwords anywhere: the backend uses plain public HTTPS,
+// falling back to the jars embedded in the launcher when MODY has none.
 export interface DontcamRelease {
   mc_version: string
   folder: string
@@ -155,12 +155,23 @@ export interface DontcamRelease {
   source: string
 }
 
+export interface DontcamCheckResult {
+  updated: boolean
+  version: string
+  path: string
+  offline: boolean
+  message: string
+}
+
 export const dontcamApi = {
   list: (): Promise<DontcamRelease[]> =>
     invoke('get_dontcam_releases'),
 
   install: (mcVersion: string, profileId?: string): Promise<string> =>
     invoke('install_dontcam_mod', { mcVersion, profileId: profileId ?? null }),
+
+  check: (mcVersion: string, profileId?: string): Promise<DontcamCheckResult> =>
+    invoke('check_dontcam_update', { mcVersion, profileId: profileId ?? null }),
 }
 
 // Utility API
