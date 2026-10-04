@@ -1,3 +1,6 @@
+//! Game profiles (instances): one json file per profile, game files under
+//! `instances/<profile_id>` (see `common::game_dir_for_profile`).
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -5,11 +8,10 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use anyhow::Result;
-use std::path::PathBuf;
 
 pub struct ProfileManager {
     profiles: Arc<RwLock<HashMap<String, Profile>>>,
-    profiles_dir: PathBuf,
+    profiles_dir: std::path::PathBuf,
 }
 
 impl ProfileManager {
@@ -78,15 +80,14 @@ impl ProfileManager {
 pub struct Profile {
     pub id: String,
     pub name: String,
-    pub icon: Option<String>,
     pub version_id: String,
     #[serde(default)]
     pub mod_loader: ModLoaderType,
     #[serde(default)]
     pub mod_loader_version: Option<String>,
     pub account_id: Option<String>,
-    /// Install the bundled DontCam client mod (1.8.x Forge) into the instance.
-    #[serde(default)]
+    /// Install the DontCam client mod into the instance on launch.
+    #[serde(default = "default_true")]
     pub dontcam_mod: bool,
     #[serde(default)]
     pub java_args: String,
@@ -102,6 +103,10 @@ pub struct Profile {
     pub last_played: Option<DateTime<Utc>>,
     #[serde(default)]
     pub play_time: u64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +152,16 @@ pub struct ResourcePackEntry {
     pub priority: u32,
 }
 
+fn loader_for(mc_version: &str) -> ModLoaderType {
+    match crate::modloaders::default_loader_for(mc_version) {
+        crate::modloaders::ModLoaderType::Forge => ModLoaderType::Forge,
+        crate::modloaders::ModLoaderType::Fabric => ModLoaderType::Fabric,
+        crate::modloaders::ModLoaderType::Quilt => ModLoaderType::Quilt,
+        crate::modloaders::ModLoaderType::NeoForge => ModLoaderType::NeoForge,
+        _ => ModLoaderType::None,
+    }
+}
+
 #[tauri::command]
 pub async fn create_profile(
     state: tauri::State<'_, crate::AppState>,
@@ -161,19 +176,12 @@ pub async fn create_profile(
     let profile = Profile {
         id: Uuid::new_v4().to_string(),
         name,
-        icon: None,
         version_id: version_id.clone(),
-        mod_loader: match crate::modloaders::default_loader_for(&version_id) {
-            crate::modloaders::ModLoaderType::Forge => ModLoaderType::Forge,
-            crate::modloaders::ModLoaderType::Fabric => ModLoaderType::Fabric,
-            crate::modloaders::ModLoaderType::Quilt => ModLoaderType::Quilt,
-            crate::modloaders::ModLoaderType::NeoForge => ModLoaderType::NeoForge,
-            _ => ModLoaderType::None,
-        },
+        mod_loader: loader_for(&version_id),
         mod_loader_version: None,
         account_id,
-        // Bundled DontCam mod installs automatically wherever a port exists
-        // (the launcher skips lines without one); toggle off to play pure vanilla.
+        // Bundled DontCam mod installs automatically wherever a port exists;
+        // toggle off to play pure vanilla.
         dontcam_mod: true,
         java_args: String::new(),
         game_args: vec![],
@@ -269,21 +277,21 @@ pub async fn duplicate_profile(
             .cloned()
             .ok_or_else(|| "Profile not found".to_string())?
     };
-    let mut new_profile = original;
-    new_profile.id = Uuid::new_v4().to_string();
-    new_profile.name = new_name;
-    new_profile.created_at = Utc::now();
-    new_profile.updated_at = Utc::now();
-    new_profile.last_played = None;
-    new_profile.play_time = 0;
+    let mut dupe = original;
+    dupe.id = Uuid::new_v4().to_string();
+    dupe.name = new_name;
+    dupe.created_at = Utc::now();
+    dupe.updated_at = Utc::now();
+    dupe.last_played = None;
+    dupe.play_time = 0;
     state
         .profiles
-        .save_profile(&new_profile)
+        .save_profile(&dupe)
         .await
         .map_err(|e| e.to_string())?;
     {
         let mut profiles = state.profiles.profiles.write().await;
-        profiles.insert(new_profile.id.clone(), new_profile.clone());
+        profiles.insert(dupe.id.clone(), dupe.clone());
     }
-    Ok(new_profile)
+    Ok(dupe)
 }

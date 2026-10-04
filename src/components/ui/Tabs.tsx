@@ -1,96 +1,72 @@
-import { ReactNode, createContext, useContext, useState } from 'react'
+import { createContext, useContext, useState, Children, cloneElement, isValidElement, type ReactNode, type ReactElement } from 'react'
 import { cn } from '../../utils/helpers'
 
-interface TabsContextValue {
+interface TabContextValue {
   value: string
-  onChange: (value: string) => void
-  variant: 'line' | 'enclosed' | 'soft'
+  onChange: (v: string) => void
+  variant: 'enclosed' | 'underline'
 }
 
-const TabsContext = createContext<TabsContextValue>({
+const TabContext = createContext<TabContextValue>({
   value: '',
   onChange: () => undefined,
-  variant: 'line',
+  variant: 'underline',
 })
 
 interface TabsProps {
-  defaultValue?: string
   value?: string
+  defaultValue?: string
   onChange?: (value: string) => void
+  variant?: 'enclosed' | 'underline'
   children: ReactNode
   className?: string
-  variant?: 'line' | 'enclosed' | 'soft'
 }
 
-export function Tabs({ defaultValue, value, onChange, children, className, variant = 'line' }: TabsProps) {
-  // uncontrolled if `value` is undefined
+export function Tabs({ value, defaultValue, onChange, variant = 'underline', children, className }: TabsProps) {
+  const [internal, setInternal] = useState(defaultValue ?? '')
+  const active = value ?? internal
+  const handleChange = (v: string) => {
+    setInternal(v)
+    onChange?.(v)
+  }
   return (
-    <UncontrolledTabs
-      defaultValue={defaultValue ?? value ?? ''}
-      controlledValue={value}
-      onChange={onChange}
-      className={className}
-      variant={variant}
-    >
-      {children}
-    </UncontrolledTabs>
+    <TabContext.Provider value={{ value: active, onChange: handleChange, variant }}>
+      <div className={cn(variant === 'enclosed' ? 'space-y-4' : 'space-y-5', className)}>{children}</div>
+    </TabContext.Provider>
   )
 }
 
-function UncontrolledTabs({
-  defaultValue,
-  controlledValue,
-  onChange,
+export function TabsList({
   children,
   className,
-  variant,
+  'aria-label': ariaLabel,
 }: {
-  defaultValue: string
-  controlledValue?: string
-  onChange?: (value: string) => void
-  children: ReactNode
-  className?: string
-  variant: 'line' | 'enclosed' | 'soft'
-}) {
-  const [internal, setInternal] = useState(defaultValue)
-  const current = controlledValue ?? internal
-
-  const handleChange = (newValue: string) => {
-    if (controlledValue === undefined) setInternal(newValue)
-    onChange?.(newValue)
-  }
-
-  return (
-    <TabsContext.Provider value={{ value: current, onChange: handleChange, variant }}>
-      <div className={cn('', className)} data-variant={variant}>
-        {children}
-      </div>
-    </TabsContext.Provider>
-  )
-}
-
-interface TabsListProps {
   children: ReactNode
   className?: string
   'aria-label'?: string
-}
-
-export function TabsList({ children, className, 'aria-label': ariaLabel }: TabsListProps) {
-  const { variant } = useContext(TabsContext)
+}) {
+  const { value, onChange, variant } = useContext(TabContext)
   return (
     <div
       role="tablist"
       aria-label={ariaLabel}
-      data-variant={variant}
       className={cn(
-        'flex flex-wrap',
-        variant === 'line' && 'gap-6 border-b border-white/[0.08]',
-        variant === 'enclosed' && 'gap-1 rounded-2xl border border-white/[0.08] bg-black/40 p-1.5',
-        variant === 'soft' && 'gap-2',
+        variant === 'enclosed'
+          ? 'flex flex-wrap gap-1 rounded-2xl border border-white/[0.08] bg-black/40 p-1.5'
+          : 'flex gap-1 border-b border-white/[0.08]',
         className
       )}
     >
-      {children}
+      {Children.map(children, (child) => {
+        if (!isValidElement(child)) return child
+        const childValue = (child.props as { value: string }).value
+        const isActive = childValue === value
+        return cloneElement(child as ReactElement<TabsTriggerProps>, {
+          active: isActive,
+          variant,
+          onSelect: () => onChange(childValue),
+        })
+      })}
     </div>
   )
 }
@@ -100,70 +76,52 @@ interface TabsTriggerProps {
   children: ReactNode
   className?: string
   disabled?: boolean
+  active?: boolean
+  variant?: 'enclosed' | 'underline'
+  onSelect?: () => void
 }
 
-export function TabsTrigger({ value, children, className, disabled }: TabsTriggerProps) {
-  const { value: current, onChange, variant } = useContext(TabsContext)
-  const isActive = current === value
-
-  const variants = {
-    line: cn(
-      'relative px-1 py-3 font-display text-sm font-bold tracking-wide transition-colors duration-200',
-      'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/50 rounded-t-lg',
-      isActive ? 'text-white' : 'text-slate-500 hover:text-slate-200',
-      isActive && 'after:absolute after:inset-x-0 after:-bottom-px after:h-[2px] after:rounded-full after:bg-primary-400 after:shadow-[0_0_12px_rgba(46,155,255,0.8)]',
-      disabled && 'cursor-not-allowed opacity-40'
-    ),
-    enclosed: cn(
-      'flex-1 rounded-xl px-4 py-2.5 font-display text-sm font-bold tracking-wide transition-all duration-200 sm:flex-none',
-      'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/50',
-      isActive
-        ? 'bg-primary-500 text-white shadow-[0_0_20px_rgba(46,155,255,0.35)]'
-        : 'text-slate-400 hover:bg-white/[0.06] hover:text-white',
-      disabled && 'cursor-not-allowed opacity-40'
-    ),
-    soft: cn(
-      'rounded-full border px-4 py-2 font-display text-[13px] font-bold tracking-wide transition-all duration-200',
-      'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/50',
-      isActive
-        ? 'border-primary-400/50 bg-primary-400/15 text-primary-200'
-        : 'border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white',
-      disabled && 'cursor-not-allowed opacity-40'
-    ),
+export function TabsTrigger({ children, className, disabled, active, variant, onSelect }: TabsTriggerProps) {
+  if (variant === 'enclosed') {
+    return (
+      <button
+        role="tab"
+        aria-selected={active}
+        onClick={onSelect}
+        disabled={disabled}
+        className={cn(
+          'rounded-xl px-4 py-2.5 font-display text-sm font-bold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40',
+          active
+            ? 'bg-primary-500 text-white shadow-[0_0_20px_rgba(46,155,255,0.35)]'
+            : 'text-slate-400 hover:text-white hover:bg-white/[0.06]',
+          className
+        )}
+      >
+        {children}
+      </button>
+    )
   }
-
   return (
     <button
       role="tab"
-      aria-selected={isActive}
-      aria-controls={`panel-${value}`}
-      id={`tab-${value}`}
-      onClick={() => !disabled && onChange(value)}
+      aria-selected={active}
+      onClick={onSelect}
       disabled={disabled}
-      className={cn(variants[variant], className)}
+      className={cn(
+        'relative px-4 py-2.5 font-display text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+        active ? 'text-white' : 'text-slate-500 hover:text-slate-300',
+        active &&
+          'after:absolute after:inset-x-0 after:-bottom-px after:h-[2px] after:rounded-full after:bg-primary-400 after:shadow-[0_0_12px_rgba(46,155,255,0.8)]',
+        className
+      )}
     >
       {children}
     </button>
   )
 }
 
-interface TabsContentProps {
-  value: string
-  children: ReactNode
-  className?: string
-}
-
-export function TabsContent({ value, children, className }: TabsContentProps) {
-  const { value: current } = useContext(TabsContext)
-  if (current !== value) return null
-  return (
-    <div
-      role="tabpanel"
-      id={`panel-${value}`}
-      aria-labelledby={`tab-${value}`}
-      className={cn('mt-5 animate-fade-in', className)}
-    >
-      {children}
-    </div>
-  )
+export function TabsContent({ value, children, className }: { value: string; children: ReactNode; className?: string }) {
+  const { value: active } = useContext(TabContext)
+  if (value !== active) return null
+  return <div className={cn('animate-fade-in', className)}>{children}</div>
 }

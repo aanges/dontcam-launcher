@@ -1,3 +1,7 @@
+//! Mojang version manifest, vanilla installs (jar + libraries + assets),
+//! and the installed-versions scan. Progress goes out as
+//! `download-progress` events: { version_id, stage, current, total }.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,8 +44,7 @@ impl VersionManager {
             anyhow::bail!("Manifest fetch failed: {}", response.status());
         }
         let manifest: VersionManifest = response.json().await?;
-        let mut lock = self.manifest.write().await;
-        *lock = Some(manifest.clone());
+        *self.manifest.write().await = Some(manifest.clone());
         Ok(manifest)
     }
 
@@ -64,49 +67,50 @@ impl VersionManager {
             Err(_) => return Ok(()),
         };
         while let Some(entry) = entries.next_entry().await? {
-            if entry.file_type().await?.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let version_json = entry.path().join(format!("{}.json", name));
-                if version_json.exists() {
-                    if let Ok(content) = tokio::fs::read_to_string(&version_json).await {
-                        if let Ok(details) = serde_json::from_str::<VersionDetails>(&content) {
-                            versions.insert(name.clone(), GameVersion::from(details));
-                            continue;
-                        }
-                        // modloader profile json (fabric/quilt/forge) — still counts as installed
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                            if v.get("mainClass").is_some() || v.get("main_class").is_some() {
-                                // best-effort entry so UI can show it
-                                versions.insert(
-                                    name.clone(),
-                                    GameVersion {
-                                        id: name.clone(),
-                                        version_type: v
-                                            .get("type")
-                                            .and_then(|t| t.as_str())
-                                            .unwrap_or("modded")
-                                            .to_string(),
-                                        main_class: v
-                                            .get("mainClass")
-                                            .or_else(|| v.get("main_class"))
-                                            .and_then(|m| m.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        arguments: GameArguments { game: vec![], jvm: vec![] },
-                                        libraries: vec![],
-                                        asset_index: AssetIndex {
-                                            id: String::new(),
-                                            sha1: String::new(),
-                                            size: 0,
-                                            total_size: 0,
-                                            url: String::new(),
-                                        },
-                                        downloads: Downloads { client: None, server: None },
-                                        java_version: None,
-                                    },
-                                );
-                            }
-                        }
+            if !entry.file_type().await?.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let version_json = entry.path().join(format!("{}.json", name));
+            if !version_json.exists() {
+                continue;
+            }
+            if let Ok(content) = tokio::fs::read_to_string(&version_json).await {
+                if let Ok(details) = serde_json::from_str::<VersionDetails>(&content) {
+                    versions.insert(name.clone(), GameVersion::from(details));
+                    continue;
+                }
+                // Loader profile json (fabric/quilt/forge) — still counts as installed.
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if v.get("mainClass").is_some() || v.get("main_class").is_some() {
+                        versions.insert(
+                            name.clone(),
+                            GameVersion {
+                                id: name.clone(),
+                                version_type: v
+                                    .get("type")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("modded")
+                                    .to_string(),
+                                main_class: v
+                                    .get("mainClass")
+                                    .or_else(|| v.get("main_class"))
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                arguments: GameArguments { game: vec![], jvm: vec![] },
+                                libraries: vec![],
+                                asset_index: AssetIndex {
+                                    id: String::new(),
+                                    sha1: String::new(),
+                                    size: 0,
+                                    total_size: 0,
+                                    url: String::new(),
+                                },
+                                downloads: Downloads { client: None, server: None },
+                                java_version: None,
+                            },
+                        );
                     }
                 }
             }
@@ -121,8 +125,7 @@ impl VersionManager {
         Ok(list)
     }
 
-    /// Full install: json + client jar + libraries (+natives meta) + assets.
-    /// Emits `download-progress` events: { version_id, stage, current, total }.
+    /// Full install: json + client jar + libraries + assets.
     pub async fn install_version(
         &self,
         app: Option<tauri::AppHandle>,
@@ -155,9 +158,8 @@ impl VersionManager {
 
         let version_dir = crate::common::versions_dir().join(version_id);
         tokio::fs::create_dir_all(&version_dir).await?;
-        let version_json_path = version_dir.join(format!("{}.json", version_id));
         tokio::fs::write(
-            &version_json_path,
+            version_dir.join(format!("{}.json", version_id)),
             serde_json::to_string_pretty(&details)?,
         )
         .await?;
@@ -168,12 +170,10 @@ impl VersionManager {
             let jar_path = version_dir.join(format!("{}.jar", version_id));
             self.download_verified(&client.url, &jar_path, Some(&client.sha1), client.size)
                 .await?;
-        } else {
+        } else if let Some(url) = details.downloads.client_url_fallback() {
             // very old versions: client url field differs
-            if let Some(url) = details.downloads.client_url_fallback() {
-                let jar_path = version_dir.join(format!("{}.jar", version_id));
-                self.download_file(&url, &jar_path).await?;
-            }
+            let jar_path = version_dir.join(format!("{}.jar", version_id));
+            self.download_file(&url, &jar_path).await?;
         }
 
         // Libraries
@@ -187,10 +187,10 @@ impl VersionManager {
         emit_progress(&app, version_id, "done", 4, 4);
 
         let game_version = GameVersion::from(details);
-        {
-            let mut installed = self.installed_versions.write().await;
-            installed.insert(version_id.to_string(), game_version.clone());
-        }
+        self.installed_versions
+            .write()
+            .await
+            .insert(version_id.to_string(), game_version.clone());
         Ok(game_version)
     }
 
@@ -206,8 +206,8 @@ impl VersionManager {
             if !library_allowed_on_current_os(lib) {
                 continue;
             }
-            // Modern natives entries (`...:natives-windows` etc.) share the same
-            // OS rules across architectures — keep only this platform's jars.
+            // Modern natives entries share the same OS rules across
+            // architectures — keep only this platform's jars.
             if let Some(name) = lib.name.as_deref() {
                 if crate::common::is_natives_library(name) {
                     let classifier = name.split(':').nth(3).unwrap_or("");
@@ -216,7 +216,6 @@ impl VersionManager {
                     }
                 }
             }
-            // artifact
             if let Some(downloads) = &lib.downloads {
                 if let Some(artifact) = &downloads.artifact {
                     let dest = libs_dir.join(artifact.local_path());
@@ -232,7 +231,7 @@ impl VersionManager {
                     }
                 }
             } else if let Some(name) = lib.name.as_ref() {
-                // Legacy lib without downloads: build URL from maven coordinates
+                // Legacy lib without downloads: build URL from maven coordinates.
                 if let Some((url, path)) = legacy_lib_url(name) {
                     let dest = libs_dir.join(&path);
                     if !dest.exists() {
@@ -265,7 +264,7 @@ impl VersionManager {
         let index: serde_json::Value = serde_json::from_str(&content)?;
         let objects = index["objects"].as_object().cloned().unwrap_or_default();
 
-        // Download objects concurrently (bounded)
+        // Download objects concurrently (bounded).
         let sem = Arc::new(tokio::sync::Semaphore::new(8));
         let mut handles = Vec::new();
         for (_name, obj) in objects {
@@ -339,14 +338,16 @@ impl VersionManager {
                         return Ok(());
                     }
                 }
-            } else {
+            } else if sha1.map_or(true, |h| h.is_empty()) {
                 return Ok(());
             }
             // verify hash if we have it
             if let Some(hash) = sha1 {
-                if let Ok(data) = tokio::fs::read(path).await {
-                    if verify_sha1(&data, hash) {
-                        return Ok(());
+                if !hash.is_empty() {
+                    if let Ok(data) = tokio::fs::read(path).await {
+                        if verify_sha1(&data, hash) {
+                            return Ok(());
+                        }
                     }
                 }
             } else {
@@ -375,8 +376,7 @@ impl VersionManager {
         if version_dir.exists() {
             tokio::fs::remove_dir_all(version_dir).await?;
         }
-        let mut installed = self.installed_versions.write().await;
-        installed.remove(version_id);
+        self.installed_versions.write().await.remove(version_id);
         Ok(())
     }
 
@@ -395,8 +395,10 @@ impl VersionManager {
             let content = tokio::fs::read_to_string(&json_path).await?;
             if let Ok(details) = serde_json::from_str::<VersionDetails>(&content) {
                 let gv = GameVersion::from(details);
-                let mut installed = self.installed_versions.write().await;
-                installed.insert(version_id.to_string(), gv.clone());
+                self.installed_versions
+                    .write()
+                    .await
+                    .insert(version_id.to_string(), gv.clone());
                 return Ok(gv);
             }
         }
@@ -645,11 +647,16 @@ fn verify_sha1(data: &[u8], expected: &str) -> bool {
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
     hasher.update(data);
-    let result = hasher.finalize();
-    hex::encode(result).eq_ignore_ascii_case(expected)
+    hex::encode(hasher.finalize()).eq_ignore_ascii_case(expected)
 }
 
-fn emit_progress(app: &Option<tauri::AppHandle>, version_id: &str, stage: &str, current: usize, total: usize) {
+fn emit_progress(
+    app: &Option<tauri::AppHandle>,
+    version_id: &str,
+    stage: &str,
+    current: usize,
+    total: usize,
+) {
     if let Some(app) = app {
         let _ = app.emit(
             "download-progress",
@@ -702,26 +709,16 @@ fn rule_matches_current_os(rule: &Rule) -> bool {
             };
             // Mojang arch values: x86, x64...
             if arch != current_arch && !(arch == "x86_64" && current_arch == "x64") {
-                // arch specified but doesn't match — rule doesn't apply
                 return false;
             }
         }
         // os.version regex matching skipped (rarely used)
     }
-    // features (is_demo_user, has_custom_resolution...) — treat demo=false
+    // features (is_demo_user, ...) — treat demo=false
     if let Some(features) = &rule.features {
         for (k, v) in features {
-            match k.as_str() {
-                "is_demo_user" => {
-                    if *v {
-                        return false;
-                    }
-                }
-                "has_custom_resolution" => {
-                    // we usually provide resolution, but don't gate on it
-                    let _ = v;
-                }
-                _ => {}
+            if k == "is_demo_user" && *v {
+                return false;
             }
         }
     }
@@ -732,10 +729,7 @@ fn pick_native(classifiers: &HashMap<String, Artifact>) -> Option<Artifact> {
     let os = crate::common::current_os_name();
     // Mojang keys: natives-windows, natives-osx, natives-linux, natives-windows-64, etc.
     let candidates: Vec<String> = match os {
-        "windows" => vec![
-            "natives-windows-64".to_string(),
-            "natives-windows".to_string(),
-        ],
+        "windows" => vec!["natives-windows-64".to_string(), "natives-windows".to_string()],
         "osx" => vec![
             "natives-macos-arm64".to_string(),
             "natives-macos".to_string(),

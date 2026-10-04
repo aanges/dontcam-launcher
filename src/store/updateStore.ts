@@ -53,7 +53,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       pendingUpdate = null
       set({ status: 'error', error: msg })
       push('error', `Sprawdzanie aktualizacji nie powiodło się: ${msg}`)
-      // silent check must not leave the dialog open — back to idle shortly
+      // Silent check must not leave the dialog open — back to idle.
       if (silent) set({ status: 'idle' })
     }
   },

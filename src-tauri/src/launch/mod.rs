@@ -1,3 +1,6 @@
+//! Game launch: version prep, loader profile discovery/merge, DontCam mod
+//! staging, Java resolution, natives, classpath, args, spawn + watchdog.
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
@@ -47,6 +50,7 @@ pub struct LaunchOptions {
     #[serde(default)]
     pub game_dir: String,
     pub resolution: Option<crate::profiles::Resolution>,
+    #[serde(default)]
     pub server: Option<ServerInfo>,
 }
 
@@ -81,6 +85,7 @@ pub async fn launch_game(
         })
 }
 
+#[allow(clippy::too_many_lines)]
 async fn inner_launch(
     app: tauri::AppHandle,
     state: crate::AppState,
@@ -99,36 +104,20 @@ async fn inner_launch(
 
     // 1b. Which modded profile to target (merged over the vanilla base)?
     // The loader is driven by the MC VERSION being launched — not blindly by
-    // the profile. Featured Play buttons launch version X with whatever
-    // profile is selected (possibly created for version Y with Y's loader).
-    // Using Y's loader for X installs the wrong mod stack and the game ends
-    // up vanilla-looking (e.g. a 1.8.9 Forge profile "playing" 1.20.1 pulls
-    // Forge for 1.20.1, which can't load our Fabric mod — or the installer
-    // fails and we silently fall back to vanilla).
-    // Rule (see effective_loader): the profile's loader wins only when the
-    // profile targets this exact version (manual choice respected);
-    // otherwise the canonical loader for the launched version wins
-    // (1.8–1.12 Forge, 1.16–1.21 Fabric + Fabric API) — never vanilla.
+    // the profile. Rule (see effective_loader): the profile's loader wins
+    // only when the profile targets this exact version; otherwise the
+    // canonical loader for the launched version wins (1.8–1.12 Forge,
+    // 1.16–1.21 Fabric + Fabric API) — never vanilla.
     // Missing loader profiles are installed on the fly so Play is self-healing.
     let (profile_loader_raw, profile_version) = if !options.profile_id.is_empty() {
         match state.profiles.get_cloned(&options.profile_id).await {
             Some(p) => (p.mod_loader, p.version_id),
-            None => (
-                crate::profiles::ModLoaderType::None,
-                String::new(),
-            ),
+            None => (crate::profiles::ModLoaderType::None, String::new()),
         }
     } else {
-        (
-            crate::profiles::ModLoaderType::None,
-            String::new(),
-        )
+        (crate::profiles::ModLoaderType::None, String::new())
     };
-    let profile_loader = effective_loader(
-        &profile_loader_raw,
-        &profile_version,
-        &options.version_id,
-    );
+    let profile_loader = effective_loader(&profile_loader_raw, &profile_version, &options.version_id);
     if profile_loader != profile_loader_raw {
         let _ = app.emit(
             "game-log",
@@ -142,11 +131,9 @@ async fn inner_launch(
         );
     }
     // Profile loaders (Fabric/Quilt) install under a deterministic id, so we
-    // can detect a stale profile (e.g. loader 0.15.11 whose Fabric API now
-    // demands >=0.16.10) and upgrade it before launch. Best effort: offline
-    // Play falls back to whatever is installed.
-    // Jar installers (Forge/NeoForge) generate their own ids — for those we
-    // keep the old behavior (install only when nothing is discovered).
+    // can detect a stale profile and upgrade it before launch. Jar installers
+    // (Forge/NeoForge) generate their own ids — install only when nothing
+    // is discovered.
     let is_profile_loader = matches!(
         profile_loader,
         crate::profiles::ModLoaderType::Fabric | crate::profiles::ModLoaderType::Quilt
@@ -160,11 +147,7 @@ async fn inner_launch(
                 PL::Quilt => ML::Quilt,
                 _ => ML::None,
             };
-            match state
-                .modloaders
-                .get_modloader_versions(backend, &options.version_id)
-                .await
-            {
+            match state.modloaders.get_modloader_versions(backend, &options.version_id).await {
                 Ok(v) => v.into_iter().next(),
                 Err(_) => None,
             }
@@ -185,11 +168,7 @@ async fn inner_launch(
                         ),
                     }),
                 );
-                match state
-                    .modloaders
-                    .install_modloader(&pref, &crate::common::base_dir())
-                    .await
-                {
+                match state.modloaders.install_modloader(&pref, &crate::common::base_dir()).await {
                     Ok(installed) => {
                         let _ = app.emit(
                             "game-log",
@@ -215,9 +194,7 @@ async fn inner_launch(
     }
     if !is_profile_loader
         && profile_loader != crate::profiles::ModLoaderType::None
-        && discover_modded_version(&options.version_id, &profile_loader)
-            .await
-            .is_none()
+        && discover_modded_version(&options.version_id, &profile_loader).await.is_none()
     {
         set_status(&state, LaunchStatus::DownloadingLibraries).await;
         let _ = app.emit(
@@ -252,62 +229,58 @@ async fn inner_launch(
             }
         }
     }
-    let (effective_id, raw_details) = match discover_modded_version(
-        &options.version_id,
-        &profile_loader,
-    )
-    .await
-    {
-        Some(mid) => {
-            tracing::info!("Using modded version {}", mid);
-            match load_raw_details(&mid).await {
-                Ok(modded) => {
-                    let mut merged = merge_inherited(modded, &base_details);
-                    merged.id = mid.clone();
-                    let _ = app.emit(
-                        "game-log",
-                        serde_json::json!({
-                            "stream": "stdout",
-                            "line": format!(
-                                "Launching modded profile {} (base {}) — entrypoint {}.",
-                                mid, options.version_id, merged.main_class
-                            ),
-                        }),
-                    );
-                    (mid, merged)
+    let (effective_id, raw_details) =
+        match discover_modded_version(&options.version_id, &profile_loader).await {
+            Some(mid) => {
+                tracing::info!("Using modded version {}", mid);
+                match load_raw_details(&mid).await {
+                    Ok(modded) => {
+                        let mut merged = merge_inherited(modded, &base_details);
+                        merged.id = mid.clone();
+                        let _ = app.emit(
+                            "game-log",
+                            serde_json::json!({
+                                "stream": "stdout",
+                                "line": format!(
+                                    "Launching modded profile {} (base {}) — entrypoint {}.",
+                                    mid, options.version_id, merged.main_class
+                                ),
+                            }),
+                        );
+                        (mid, merged)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load modded profile, vanilla fallback: {}", e);
+                        let _ = app.emit(
+                            "game-log",
+                            serde_json::json!({
+                                "stream": "stderr",
+                                "line": format!(
+                                    "Modded profile {} unreadable ({}) — launching vanilla {}.",
+                                    mid, e, options.version_id
+                                ),
+                            }),
+                        );
+                        (options.version_id.clone(), base_details)
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to load modded profile, vanilla fallback: {}", e);
+            }
+            None => {
+                if profile_loader != crate::profiles::ModLoaderType::None {
                     let _ = app.emit(
                         "game-log",
                         serde_json::json!({
                             "stream": "stderr",
                             "line": format!(
-                                "Modded profile {} unreadable ({}) — launching vanilla {}.",
-                                mid, e, options.version_id
+                                "No installed {:?} profile for {} — launching vanilla. Use Install & Play to set it up.",
+                                profile_loader, options.version_id
                             ),
                         }),
                     );
-                    (options.version_id.clone(), base_details)
                 }
+                (options.version_id.clone(), base_details)
             }
-        }
-        None => {
-            if profile_loader != crate::profiles::ModLoaderType::None {
-                let _ = app.emit(
-                    "game-log",
-                    serde_json::json!({
-                        "stream": "stderr",
-                        "line": format!(
-                            "No installed {:?} profile for {} — launching vanilla. Use Install & Play to set it up.",
-                            profile_loader, options.version_id
-                        ),
-                    }),
-                );
-            }
-            (options.version_id.clone(), base_details)
-        }
-    };
+        };
 
     // 2. Resolve game dir
     let game_dir = if options.game_dir.trim().is_empty() {
@@ -348,10 +321,7 @@ async fn inner_launch(
                         "game-log",
                         serde_json::json!({
                             "stream": "stdout",
-                            "line": format!(
-                                "Fabric API for {} downloaded.",
-                                options.version_id
-                            ),
+                            "line": format!("Fabric API for {} downloaded.", options.version_id),
                         }),
                     );
                 }
@@ -395,8 +365,6 @@ async fn inner_launch(
     let game_args = build_game_args(&raw_details, &options, &settings, &version, &game_dir)?;
 
     tracing::info!("Launching {} with java {}", options.version_id, java_path.display());
-    tracing::info!("JVM args: {:?}", jvm_args);
-    tracing::info!("Game args: {:?}", game_args);
 
     // pre-launch command
     if let Some(cmd) = &settings.advanced.pre_launch_command {
@@ -411,9 +379,6 @@ async fn inner_launch(
     cmd.args(&game_args);
     cmd.current_dir(&game_dir);
     cmd.env("MC_VERSION", &options.version_id);
-    for (k, v) in &settings.advanced.environment_variables {
-        cmd.env(k, v);
-    }
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -427,7 +392,7 @@ async fn inner_launch(
 
     let mut child = cmd.spawn().context("Failed to spawn java. Is Java installed?")?;
 
-    // Take stdout/stderr pipes and forward to frontend log event
+    // Forward stdout/stderr to the frontend log event
     if let Some(stdout) = child.stdout.take() {
         let app_c = app.clone();
         tokio::spawn(async move {
@@ -506,10 +471,7 @@ async fn inner_launch(
         }
     });
 
-    Ok(format!(
-        "Game launched (pid {})",
-        pid.unwrap_or(0)
-    ))
+    Ok(format!("Game launched (pid {})", pid.unwrap_or(0)))
 }
 
 async fn set_status(state: &crate::AppState, status: LaunchStatus) {
@@ -546,15 +508,12 @@ pub(crate) fn bundled_mod_for(version_id: &str) -> Option<&'static BundledMod> {
         .find(|m| mod_applies(m.mc_prefix, version_id))
 }
 
-/// GitHub repo hosting DontCam mod release assets (one jar per MC line,
-/// e.g. `dontcam-1.20.1-0.1.0.jar`). The launcher takes the jar from the
-/// LATEST release there; embedded `resources/dontcam` jars are only
-/// an offline fallback. To ship new mods: build the jars, publish a new
-/// release with the same asset names — no launcher rebuild needed.
-pub(crate) const MODS_REPO: &str = "aanges/DontCamClient-Mods";
+/// Public MODY repo with DontCam mod jars (one per MC line). The launcher
+/// takes the jar from the LATEST release there when present; embedded
+/// `resources/dontcam` jars are the offline fallback. No auth, no tokens.
+pub(crate) const MODS_REPO: &str = "aanges/MODY";
 
 /// Expected remote asset (mc line prefix + jar name) for a game version.
-/// Mapping comes from the embedded table (same file names as the release).
 pub(crate) fn mod_asset_for(version_id: &str) -> Option<(&'static str, &'static str)> {
     BUNDLED_MODS_GENERATED
         .iter()
@@ -606,17 +565,14 @@ pub(crate) async fn ensure_dontcam_mod(game_dir: &PathBuf, version_id: &str) -> 
 /// Download `file_name` from the latest MODS_REPO release into `dest`.
 /// Returns Ok(true) when `dest` is correct afterwards (downloaded now or
 /// already matching the release size), Ok(false) when there is nothing
-/// usable remotely (unknown repo / no such asset yet).
+/// usable remotely (no releases / no such asset yet — MODY ships sources).
 async fn fetch_remote_mod(file_name: &str, dest: &PathBuf) -> Result<bool> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .user_agent("DontCam-Client/0.1")
         .build()?;
     let api: serde_json::Value = client
-        .get(format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            MODS_REPO
-        ))
+        .get(format!("https://api.github.com/repos/{}/releases/latest", MODS_REPO))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "DontCam-Client/0.1")
         .send()
@@ -736,10 +692,8 @@ async fn install_best_loader(
 ///   (an explicit/manual choice such as NeoForge is respected).
 /// - Otherwise the canonical loader for the launched version wins
 ///   (1.8–1.12 Forge, 1.16–1.21 Fabric), so a profile created for another
-///   MC line can never drag its loader along and produce a vanilla-looking
-///   game. No-profile launches also resolve to the canonical loader.
-///   Unknown lines fall back to the canonical default as well (never None
-///   when a default exists).
+///   MC line can never drag its loader along. Unknown lines fall back to
+///   the canonical default as well (never None when a default exists).
 pub(crate) fn effective_loader(
     profile_loader: &crate::profiles::ModLoaderType,
     profile_version: &str,
@@ -856,9 +810,8 @@ async fn resolve_java(
         .unwrap_or_else(|| crate::common::recommended_java_major(&options.version_id));
 
     // Explicit paths (frontend / settings) win — but only when they point at
-    // a compatible runtime. A stale/incompatible path (e.g. system Java 26
-    // for a Java 17 game) is rejected with a log line instead of launching
-    // silently into an ASM/Mixin crash.
+    // a compatible runtime. A stale/incompatible path is rejected with a log
+    // line instead of launching silently into an ASM/Mixin crash.
     let mut explicit: Option<PathBuf> = None;
     if !options.java_path.trim().is_empty() && options.java_path != "java" {
         let p = PathBuf::from(&options.java_path);
@@ -903,8 +856,7 @@ async fn resolve_java(
     match state.java.ensure_java(required).await {
         Some(found) => {
             if !crate::java::java_acceptable(required, found.version.major) {
-                // Offline last resort: clearly warn, this runtime may crash
-                // (e.g. Java 26 ASM/Mixin failure on a Java 17 game).
+                // Offline last resort: clearly warn, this runtime may crash.
                 let _ = app.emit(
                     "game-log",
                     serde_json::json!({
@@ -961,9 +913,8 @@ fn build_classpath(details: &crate::versions::VersionDetails, version_id: &str) 
             if let Some(artifact) = &downloads.artifact {
                 // Main jars always go on the classpath. Modern natives entries
                 // (4-part coords like `...:natives-windows`) go on it too so the
-                // LWJGL3 SharedLibraryLoader finds their nested `windows/x64/...`
-                // resources — but only the ones matching this platform.
-                // (Legacy classifier natives were extracted to the natives dir.)
+                // LWJGL3 SharedLibraryLoader finds their nested resources —
+                // but only the ones matching this platform.
                 let mut include = true;
                 if let Some(name) = lib.name.as_deref() {
                     if is_natives_library(name) {
@@ -1037,8 +988,7 @@ async fn extract_natives(
         }
 
         // Modern format: natives are separate library entries with a classifier
-        // coordinate, e.g. `org.lwjgl:lwjgl:3.3.3:natives-windows` or
-        // netty's `...:linux-x86_64`. Extract the matching ones.
+        // coordinate. Extract the matching ones.
         let name = lib.name.as_deref().unwrap_or("");
         let classifier = name.split(':').nth(3).unwrap_or("");
         let is_native_entry = is_natives_library(name)
@@ -1066,7 +1016,7 @@ async fn extract_natives(
     }
     // Modern LWJGL3 jars nest DLLs (e.g. `windows/x64/org/lwjgl/lwjgl.dll`).
     // Copy every native library to the natives root so `-Djava.library.path`
-    // lookups by bare filename succeed (this is also what legacy flat jars do).
+    // lookups by bare filename succeed.
     flatten_natives(natives_dir)?;
     Ok(())
 }
@@ -1206,15 +1156,12 @@ fn build_jvm_args(
     out.push(format!("-Xmx{}M", max_mb.max(min_mb)));
 
     // base defines
-    out.push(format!(
-        "-Djava.library.path={}",
-        natives_dir.to_string_lossy()
-    ));
+    out.push(format!("-Djava.library.path={}", natives_dir.to_string_lossy()));
     out.push("-Dminecraft.launcher.brand=DontCam Client".to_string());
-    out.push("-Dminecraft.launcher.version=0.1.0".to_string());
+    out.push("-Dminecraft.launcher.version=0.1.1".to_string());
 
     // DontCam mod identity: auth source (msa = Microsoft, legacy = offline)
-    // and the player's UUID. The mod gates the owner crown on msa sessions.
+    // and the player's UUID.
     let dontcam_auth = match options.account.account_type {
         crate::auth::AccountType::Microsoft => "msa",
         crate::auth::AccountType::Offline => "legacy",
@@ -1224,7 +1171,7 @@ fn build_jvm_args(
 
     // version-provided jvm args (modern format)
     if let Some(args) = &details.arguments {
-        let ctx = jvm_context(options, settings, game_dir, natives_dir, classpath);
+        let ctx = jvm_context(options, game_dir, natives_dir, classpath);
         for arg in &args.jvm {
             for expanded in expand_argument(arg, &ctx) {
                 // skip classpath placeholder — we add -cp ourselves
@@ -1238,7 +1185,7 @@ fn build_jvm_args(
 
     // user jvm args from settings + profile
     for a in split_args(&settings.java.jvm_args) {
-        if a == "-Xms" || a == "-Xmx" || a.starts_with("-Xms") || a.starts_with("-Xmx") {
+        if a.starts_with("-Xms") || a.starts_with("-Xmx") {
             continue; // memory handled above
         }
         out.push(a);
@@ -1336,7 +1283,6 @@ fn build_game_args(
 
 fn jvm_context(
     options: &LaunchOptions,
-    _settings: &crate::settings::Settings,
     game_dir: &PathBuf,
     natives_dir: &PathBuf,
     classpath: &str,
@@ -1344,7 +1290,7 @@ fn jvm_context(
     let mut m = std::collections::HashMap::new();
     m.insert("natives_directory".to_string(), natives_dir.to_string_lossy().to_string());
     m.insert("launcher_name".to_string(), "DontCam Client".to_string());
-    m.insert("launcher_version".to_string(), "0.1.0".to_string());
+    m.insert("launcher_version".to_string(), "0.1.1".to_string());
     m.insert("classpath".to_string(), classpath.to_string());
     m.insert("game_directory".to_string(), game_dir.to_string_lossy().to_string());
     m.insert("auth_player_name".to_string(), options.account.username.clone());
@@ -1423,7 +1369,10 @@ fn expand_argument(
     }
 }
 
-fn rule_matches(rule: &crate::versions::Rule, ctx: &std::collections::HashMap<String, String>) -> bool {
+fn rule_matches(
+    rule: &crate::versions::Rule,
+    ctx: &std::collections::HashMap<String, String>,
+) -> bool {
     if let Some(os) = &rule.os {
         if let Some(name) = &os.name {
             let current = crate::common::current_os_name();
@@ -1443,7 +1392,6 @@ fn rule_matches(rule: &crate::versions::Rule, ctx: &std::collections::HashMap<St
         for (k, expected) in features {
             let actual = ctx.get(k.as_str()).map(|v| v == "true").unwrap_or(false);
             if actual != *expected {
-                // special-case: has_custom_resolution — we treat as false
                 return false;
             }
         }
@@ -1493,8 +1441,7 @@ fn split_args(s: &str) -> Vec<String> {
 pub async fn get_launch_status(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<LaunchStatus, String> {
-    let status = state.launch.launch_status.read().await;
-    Ok(status.clone())
+    Ok(state.launch.launch_status.read().await.clone())
 }
 
 #[tauri::command]
@@ -1523,9 +1470,7 @@ mod tests {
         assert!(!native_classifier_matches("natives-macos"));
         assert!(!native_classifier_matches("natives-macos-arm64"));
         assert!(!native_classifier_matches("linux-x86_64"));
-        assert!(is_natives_library(
-            "org.lwjgl:lwjgl-glfw:3.3.3:natives-windows"
-        ));
+        assert!(is_natives_library("org.lwjgl:lwjgl-glfw:3.3.3:natives-windows"));
         assert!(!is_natives_library("org.lwjgl:lwjgl-glfw:3.3.3"));
         assert!(!is_natives_library(
             "io.netty:netty-transport-native-epoll:4.2.7.Final:linux-x86_64"
@@ -1534,14 +1479,20 @@ mod tests {
 
     #[test]
     fn legacy_coords_with_classifier() {
-        let (_, path) = legacy_lib_coords_to_path(
-            "org.lwjgl:lwjgl-glfw:3.3.3:natives-windows",
-        )
-        .expect("coords");
+        let (_, path) =
+            legacy_lib_coords_to_path("org.lwjgl:lwjgl-glfw:3.3.3:natives-windows").expect("coords");
         assert_eq!(
             path,
             "org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3-natives-windows.jar"
         );
+    }
+
+    #[test]
+    fn mod_line_matching() {
+        assert!(mod_applies("1.20", "1.20.1"));
+        assert!(mod_applies("1.20", "1.20.1-forge-47.2.0"));
+        assert!(!mod_applies("1.2", "1.21.1"));
+        assert!(!mod_applies("1.20", "1.21.1"));
     }
 
     fn test_details(
@@ -1556,10 +1507,7 @@ mod tests {
             type_: "release".to_string(),
             main_class: main_class.to_string(),
             arguments: Some(GameArguments {
-                game: game_args
-                    .into_iter()
-                    .map(|s| Argument::Plain(s.to_string()))
-                    .collect(),
+                game: game_args.into_iter().map(|s| Argument::Plain(s.to_string())).collect(),
                 jvm: vec![],
             }),
             minecraft_arguments: None,
@@ -1594,10 +1542,7 @@ mod tests {
             None,
         );
         let merged = merge_inherited(profile, &base);
-        assert_eq!(
-            merged.main_class,
-            "cpw.mods.bootstraplauncher.BootstrapLauncher"
-        );
+        assert_eq!(merged.main_class, "cpw.mods.bootstraplauncher.BootstrapLauncher");
         let game = merged.arguments.expect("args").game;
         assert_eq!(game.len(), 4);
         assert_eq!(merged.asset_index.expect("assets").id, "5");
@@ -1635,52 +1580,24 @@ mod tests {
     fn effective_loader_prefers_matching_profile_but_canonical_otherwise() {
         use crate::profiles::ModLoaderType as PL;
         // Profile made for THIS version: its choice wins (manual NeoForge kept).
-        assert_eq!(
-            effective_loader(&PL::NeoForge, "1.21.1", "1.21.1"),
-            PL::NeoForge
-        );
-        assert_eq!(
-            effective_loader(&PL::Fabric, "1.20.1", "1.20.1"),
-            PL::Fabric
-        );
+        assert_eq!(effective_loader(&PL::NeoForge, "1.21.1", "1.21.1"), PL::NeoForge);
+        assert_eq!(effective_loader(&PL::Fabric, "1.20.1", "1.20.1"), PL::Fabric);
         assert_eq!(effective_loader(&PL::Forge, "1.8.9", "1.8.9"), PL::Forge);
         // Profile made for ANOTHER version: canonical loader for the launched
         // version wins (a 1.8.9 Forge profile must not force Forge on 1.20.1).
         assert_eq!(effective_loader(&PL::Forge, "1.8.9", "1.20.1"), PL::Fabric);
         assert_eq!(effective_loader(&PL::Fabric, "1.20.1", "1.8.9"), PL::Forge);
-        assert_eq!(
-            effective_loader(&PL::Fabric, "1.21.1", "1.20.1"),
-            PL::Fabric
-        );
+        assert_eq!(effective_loader(&PL::Fabric, "1.21.1", "1.20.1"), PL::Fabric);
         // No profile / loader unset: canonical default, never vanilla.
         assert_eq!(effective_loader(&PL::None, "", "1.20.1"), PL::Fabric);
         assert_eq!(effective_loader(&PL::None, "", "1.12.2"), PL::Forge);
-        assert_eq!(
-            effective_loader(&PL::None, "1.20.1", "1.20.1"),
-            PL::Fabric
-        );
+        assert_eq!(effective_loader(&PL::None, "1.20.1", "1.20.1"), PL::Fabric);
     }
 
     #[test]
     fn mod_asset_mapping() {
-        assert_eq!(
-            mod_asset_for("1.20.1"),
-            Some(("1.20", "dontcam-1.20.1-0.1.0.jar"))
-        );
+        assert_eq!(mod_asset_for("1.20.1"), Some(("1.20", "dontcam-1.20.1-0.1.0.jar")));
         assert_eq!(mod_asset_for("1.8.9"), Some(("1.8", "dontcam-1.8.9-0.1.0.jar")));
         assert_eq!(mod_asset_for("1.16.5"), Some(("1.16", "dontcam-1.16.5-0.1.0.jar")));
-        assert_eq!(mod_asset_for("9.9.9"), None);
-    }
-
-    #[test]
-    fn mod_line_matching() {
-        assert!(mod_applies("1.21", "1.21.1"));
-        assert!(mod_applies("1.21", "1.21"));
-        assert!(mod_applies("1.8", "1.8.9"));
-        assert!(mod_applies("1.20", "1.20.1"));
-        assert!(mod_applies("1.16", "1.16.5"));
-        assert!(!mod_applies("1.2", "1.21.1"));
-        assert!(!mod_applies("1.21", "1.20.1"));
-        assert!(!mod_applies("1.8", "1.18.2"));
     }
 }

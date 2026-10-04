@@ -1,3 +1,6 @@
+// Shared shapes between the Tauri backend (serde) and the React frontend.
+// Backend structs must serialize to exactly these field names.
+
 export interface Account {
   id: string
   username: string
@@ -6,8 +9,6 @@ export interface Account {
   refresh_token?: string
   token_expires_at?: string
   account_type: 'microsoft' | 'offline'
-  skin_url?: string
-  cape_url?: string
   created_at: string
   last_used: string
 }
@@ -102,15 +103,17 @@ export interface JavaVersion {
   major_version: number
 }
 
+export type ModLoaderType = 'forge' | 'fabric' | 'quilt' | 'neoforge' | 'liteloader' | 'none'
+
+export type ProfileLoader = Exclude<ModLoaderType, 'liteloader'>
+
 export interface Profile {
   id: string
   name: string
-  icon?: string
   version_id: string
-  mod_loader: ModLoaderType
+  mod_loader: ProfileLoader
   mod_loader_version?: string
   account_id?: string
-  /** Install the bundled DontCam client mod (1.8.x Forge) into the instance. */
   dontcam_mod: boolean
   java_args: string
   game_args: string[]
@@ -139,8 +142,6 @@ export interface ModEntry {
   dependencies: string[]
 }
 
-export type ModLoaderType = 'forge' | 'fabric' | 'quilt' | 'neoforge' | 'liteloader' | 'none'
-
 export interface ResourcePackEntry {
   id: string
   name: string
@@ -149,30 +150,19 @@ export interface ResourcePackEntry {
   priority: number
 }
 
-export interface Settings {
-  theme: Theme
-  language: string
-  java: JavaSettings
-  game: GameSettings
-  network: NetworkSettings
-  ui: UISettings
-  advanced: AdvancedSettings
-}
-
 export type Theme = 'light' | 'dark' | 'system'
-
-export interface JavaSettings {
-  auto_detect: boolean
-  preferred_version?: string
-  custom_java_path?: string
-  jvm_args: string
-  memory_allocation: MemoryAllocation
-}
 
 export interface MemoryAllocation {
   min: number
   max: number
   unit: 'MB' | 'GB'
+}
+
+export interface JavaSettings {
+  auto_detect: boolean
+  custom_java_path?: string
+  jvm_args: string
+  memory_allocation: MemoryAllocation
 }
 
 export interface GameSettings {
@@ -181,23 +171,13 @@ export interface GameSettings {
   keep_launcher_open: boolean
   custom_resolution?: Resolution
   fullscreen: boolean
-  vsync: boolean
-  fov: number
-  render_distance: number
-  max_fps: number
-  enable_mods: boolean
-  enable_resource_packs: boolean
 }
 
 export interface NetworkSettings {
-  proxy_enabled: boolean
-  proxy_host: string
-  proxy_port: number
-  proxy_username?: string
-  proxy_password?: string
   download_threads: number
-  bandwidth_limit?: number
 }
+
+export type VersionSort = 'newest_first' | 'oldest_first' | 'alphabetical' | 'release_type'
 
 export interface UISettings {
   show_snapshots: boolean
@@ -206,21 +186,24 @@ export interface UISettings {
   sort_versions_by: VersionSort
   compact_mode: boolean
   animations: boolean
-  background_blur: boolean
-  news_enabled: boolean
 }
-
-export type VersionSort = 'newest_first' | 'oldest_first' | 'alphabetical' | 'release_type'
 
 export interface AdvancedSettings {
   debug_logging: boolean
   console_enabled: boolean
   custom_game_args: string[]
-  environment_variables: Record<string, string>
   pre_launch_command?: string
   post_exit_command?: string
   verify_downloads: boolean
-  parallel_downloads: number
+}
+
+export interface Settings {
+  language: string
+  java: JavaSettings
+  game: GameSettings
+  network: NetworkSettings
+  ui: UISettings
+  advanced: AdvancedSettings
 }
 
 export interface ModLoaderVersion {
@@ -248,34 +231,20 @@ export interface InstallModdedResult {
   loader_error?: string | null
 }
 
-export interface JavaInstallation {
-  path: string
-  version: JavaVersionInfo
-  vendor: JavaVendor
-  architecture: JavaArchitecture
-  source: JavaSource
-}
-
 export interface JavaVersionInfo {
   major: number
   full: string
 }
 
-export type JavaVendor = 
-  | 'eclipse_adoptium'
-  | 'microsoft'
-  | 'amazon_corretto'
-  | 'azul_zulu'
-  | 'bellsoft_liberica'
-  | 'oracle'
-  | 'openjdk'
-  | 'unknown'
+export interface JavaInstallation {
+  path: string
+  version: JavaVersionInfo
+  vendor: string
+  architecture: string
+  source: string
+}
 
-export type JavaArchitecture = 'x64' | 'x86' | 'arm64'
-
-export type JavaSource = 'system' | 'path' | 'detected' | 'managed' | 'custom'
-
-export type LaunchStatus = 
+export type LaunchStatus =
   | 'idle'
   | 'preparing'
   | 'downloading_assets'
@@ -294,10 +263,4 @@ export interface LaunchOptions {
   game_args: string[]
   game_dir: string
   resolution?: Resolution
-  server?: ServerInfo
-}
-
-export interface ServerInfo {
-  host: string
-  port: number
 }

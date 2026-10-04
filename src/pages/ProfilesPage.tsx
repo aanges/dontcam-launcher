@@ -5,13 +5,14 @@ import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Modal, ConfirmDialog } from '../components/ui/Modal'
-import { Select } from '../components/ui/Select'
+import { Select, Checkbox } from '../components/ui/Select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs'
 import { useProfileStore } from '../store/profileStore'
 import { useVersionStore } from '../store/versionStore'
 import { useAuthStore } from '../store/authStore'
 import { useLaunchStore } from '../store/launchStore'
 import { useSettingsStore } from '../store/settingsStore'
+import { useDontcamStore } from '../store/dontcamStore'
 import { javaApi, utilsApi } from '../tauri/api'
 import { formatDate, getMemoryArgs, parseJvmArgs } from '../utils/helpers'
 import type { Profile } from '../types'
@@ -22,6 +23,8 @@ export function ProfilesPage() {
   const { currentAccount, accounts } = useAuthStore()
   const { launchStatus, launchGame, killGame } = useLaunchStore()
   const { settings } = useSettingsStore()
+  const checkDontcamUpdate = useDontcamStore((s) => s.checkDontcamUpdate)
+  const dontcamChecking = useDontcamStore((s) => s.checking)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null)
@@ -30,6 +33,7 @@ export function ProfilesPage() {
   const [newProfileVersion, setNewProfileVersion] = useState('')
   const [newProfileAccount, setNewProfileAccount] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [dontcamOffline, setDontcamOffline] = useState<string | null>(null)
 
   useEffect(() => {
     loadProfiles()
@@ -81,7 +85,10 @@ export function ProfilesPage() {
       return
     }
     setError(null)
+    setDontcamOffline(null)
     try {
+      const res = await checkDontcamUpdate(profile.version_id, profile.id)
+      if (res.offline) setDontcamOffline(res.message)
       const [java, gameDir] = await Promise.all([
         javaApi.resolveForVersion(profile.version_id).catch(() => null),
         utilsApi.getGameDir(profile.id).catch(() => ''),
@@ -122,9 +129,8 @@ export function ProfilesPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="alert alert-red">{error}</div>
-      )}
+      {error && <div className="alert alert-red">{error}</div>}
+      {dontcamOffline && <div className="alert alert-yellow">{dontcamOffline}</div>}
 
       {profiles.length === 0 ? (
         <Card padding="lg" className="text-center">
@@ -145,10 +151,7 @@ export function ProfilesPage() {
               <Card
                 key={profile.id}
                 padding="md"
-                className={cn(
-                  'card-lift cursor-pointer',
-                  selected && '!border-primary-400/50 shadow-[0_0_32px_rgba(46,155,255,0.15)]'
-                )}
+                className={cn('card-lift cursor-pointer', selected && '!border-primary-400/50 shadow-[0_0_32px_rgba(46,155,255,0.15)]')}
                 onClick={() => selectProfile(profile)}
               >
                 <div className="flex items-center gap-3">
@@ -167,7 +170,7 @@ export function ProfilesPage() {
                   <span className="pill">{profile.last_played ? `Played ${formatDate(profile.last_played)}` : 'Never played'}</span>
                 </div>
                 <div className="mt-4 flex items-center gap-1 border-t border-white/[0.07] pt-3" onClick={(e) => e.stopPropagation()}>
-                  <Button size="sm" className="flex-1" onClick={() => void handleLaunch(profile)} disabled={isRunning}>
+                  <Button size="sm" className="flex-1" onClick={() => void handleLaunch(profile)} disabled={isRunning} loading={dontcamChecking !== null}>
                     <Play className="h-4 w-4 mr-1" /> Play
                   </Button>
                   <Button variant="ghost" size="sm" className="!h-8 !w-8 !p-0" onClick={() => setEditingProfile(profile)} aria-label={`Edit ${profile.name}`}>
@@ -253,7 +256,7 @@ export function ProfilesPage() {
                   <span>
                     <span className="block font-display text-sm font-bold text-white">DontCam Client Mod</span>
                     <span className="mt-0.5 block text-[13px] leading-relaxed text-slate-400">
-                      Auto-installs the bundled DontCam mod (HUD, Right-Shift menu, DC badges, custom main menu) into this instance on launch, wherever a port exists.
+                      Auto-installs the bundled DontCam mod into this instance on launch, wherever a port exists.
                     </span>
                   </span>
                 </label>
@@ -302,6 +305,16 @@ export function ProfilesPage() {
                     }
                   />
                 </div>
+                <Checkbox
+                  label="Fullscreen"
+                  checked={editingProfile.resolution?.fullscreen ?? false}
+                  onChange={(e) =>
+                    setEditingProfile({
+                      ...editingProfile,
+                      resolution: { width: editingProfile.resolution?.width ?? 854, height: editingProfile.resolution?.height ?? 480, fullscreen: e.target.checked },
+                    })
+                  }
+                />
                 <div className="flex justify-end gap-3 border-t border-white/[0.08] pt-4">
                   <Button variant="secondary" onClick={() => setEditingProfile(null)}>Cancel</Button>
                   <Button onClick={() => void handleUpdateProfile()}>Save Changes</Button>

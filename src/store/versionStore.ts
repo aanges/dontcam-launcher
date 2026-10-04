@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { VersionManifest, VersionInfo, GameVersion, ModLoaderVersion, InstalledModLoader, InstallModdedResult, JavaInstallation } from '../types'
+import type {
+  VersionManifest,
+  VersionInfo,
+  GameVersion,
+  ModLoaderVersion,
+  InstalledModLoader,
+  InstallModdedResult,
+  JavaInstallation,
+} from '../types'
 import { versionApi, modLoaderApi, javaApi } from '../tauri/api'
 import { useDontcamStore } from './dontcamStore'
 
@@ -41,7 +49,7 @@ export const useVersionStore = create<VersionState>((set, get) => ({
   isLoading: false,
   isInstalling: null,
   installProgress: {},
-  
+
   loadManifest: async () => {
     set({ isLoading: true })
     try {
@@ -54,7 +62,7 @@ export const useVersionStore = create<VersionState>((set, get) => ({
       set({ isLoading: false })
     }
   },
-  
+
   loadInstalledVersions: async () => {
     try {
       const versions = await versionApi.getInstalled()
@@ -63,7 +71,7 @@ export const useVersionStore = create<VersionState>((set, get) => ({
       console.error('Failed to load installed versions:', error)
     }
   },
-  
+
   installVersion: async (versionId, force = false) => {
     set({ isInstalling: versionId, installProgress: { ...get().installProgress, [versionId]: 0 } })
     try {
@@ -81,15 +89,15 @@ export const useVersionStore = create<VersionState>((set, get) => ({
       throw error
     }
   },
-  
+
   installModded: async (versionId, force = false, profileId) => {
     set({ isInstalling: versionId, installProgress: { ...get().installProgress, [versionId]: 0 } })
     try {
       const result = await modLoaderApi.installModded(versionId, force, profileId)
       await get().loadInstalledVersions()
-      // Refresh the DontCam jar right after install (backend already staged
-      // one — this only swaps it when MODY has something newer). Must not
-      // fail the install when the network is down.
+      // Refresh the DontCam jar right after install (the backend already
+      // staged one — this only swaps it when MODY has something newer).
+      // Must not fail the install when the network is down.
       try {
         await useDontcamStore.getState().checkDontcamUpdate(versionId, profileId)
       } catch {
@@ -112,11 +120,11 @@ export const useVersionStore = create<VersionState>((set, get) => ({
       installedVersions: state.installedVersions.filter((v) => v.id !== versionId),
     }))
   },
-  
+
   getVersionDetails: async (versionId) => {
     return versionApi.getDetails(versionId)
   },
-  
+
   filterVersions: (showSnapshots, showOld, showAlphaBeta, sortBy) => {
     const { manifest } = get()
     if (!manifest) return
@@ -130,7 +138,7 @@ export const useVersionStore = create<VersionState>((set, get) => ({
       if (!showAlphaBeta && (v.type === 'alpha' || v.type === 'beta')) return false
       return true
     })
-    
+
     switch (sortBy) {
       case 'newest_first':
         versions.sort((a, b) => new Date(b.release_time).getTime() - new Date(a.release_time).getTime())
@@ -141,37 +149,36 @@ export const useVersionStore = create<VersionState>((set, get) => ({
       case 'alphabetical':
         versions.sort((a, b) => a.id.localeCompare(b.id))
         break
-      case 'release_type':
-        versions.sort((a, b) => {
-          const typeOrder = { release: 0, beta: 1, alpha: 2, snapshot: 3, old_beta: 4, old_alpha: 5 }
-          return (typeOrder[a.type as keyof typeof typeOrder] || 99) - (typeOrder[b.type as keyof typeof typeOrder] || 99)
-        })
+      case 'release_type': {
+        const typeOrder: Record<string, number> = { release: 0, beta: 1, alpha: 2, snapshot: 3, old_beta: 4, old_alpha: 5 }
+        versions.sort((a, b) => (typeOrder[a.type] ?? 99) - (typeOrder[b.type] ?? 99))
         break
+      }
     }
-    
+
     set({ filteredVersions: versions })
   },
-  
+
   getModLoaderVersions: async (modLoader, mcVersion) => {
-    return modLoaderApi.getVersions(modLoader as any, mcVersion)
+    return modLoaderApi.getVersions(modLoader as never, mcVersion)
   },
-  
+
   installModLoader: async (version, gameDir) => {
     return modLoaderApi.install(version, gameDir)
   },
-  
+
   getInstalledModLoaders: async () => {
     return modLoaderApi.getInstalled()
   },
-  
+
   detectJava: async () => {
     return javaApi.detect()
   },
-  
+
   getJavaInstallations: async () => {
     return javaApi.getInstallations()
   },
-  
+
   downloadJava: async (version, vendor, architecture) => {
     return javaApi.download(version, vendor, architecture)
   },

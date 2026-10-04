@@ -27,7 +27,7 @@ export const useProfileStore = create<ProfileState>()(
       profiles: [],
       selectedProfile: null,
       isLoading: false,
-      
+
       loadProfiles: async () => {
         set({ isLoading: true })
         try {
@@ -35,18 +35,25 @@ export const useProfileStore = create<ProfileState>()(
             ...p,
             dontcam_mod: p.dontcam_mod ?? true,
           }))
-          set({ profiles, isLoading: false })
+          set((state) => ({
+            profiles,
+            selectedProfile:
+              state.selectedProfile && profiles.some((p) => p.id === state.selectedProfile?.id)
+                ? state.selectedProfile
+                : (profiles[0] ?? null),
+            isLoading: false,
+          }))
         } catch {
           set({ isLoading: false })
         }
       },
-      
+
       createProfile: async (name, versionId, accountId) => {
         const profile = await profileApi.create(name, versionId, accountId)
         set((state) => ({ profiles: [...state.profiles, profile] }))
         return profile
       },
-      
+
       updateProfile: async (profile) => {
         await profileApi.update(profile)
         set((state) => ({
@@ -54,7 +61,7 @@ export const useProfileStore = create<ProfileState>()(
           selectedProfile: state.selectedProfile?.id === profile.id ? profile : state.selectedProfile,
         }))
       },
-      
+
       deleteProfile: async (profileId) => {
         await profileApi.delete(profileId)
         set((state) => ({
@@ -62,80 +69,65 @@ export const useProfileStore = create<ProfileState>()(
           selectedProfile: state.selectedProfile?.id === profileId ? null : state.selectedProfile,
         }))
       },
-      
+
       duplicateProfile: async (profileId, newName) => {
         const profile = await profileApi.duplicate(profileId, newName)
         set((state) => ({ profiles: [...state.profiles, profile] }))
         return profile
       },
-      
+
       selectProfile: (profile) => set({ selectedProfile: profile }),
-      
+
       addMod: async (profileId, mod) => {
         const profile = get().profiles.find((p) => p.id === profileId)
         if (!profile) return
-        
-        const updated = { ...profile, mods: [...profile.mods, mod] }
-        await get().updateProfile(updated)
+        await get().updateProfile({ ...profile, mods: [...profile.mods, mod] })
       },
-      
+
       removeMod: async (profileId, modId) => {
         const profile = get().profiles.find((p) => p.id === profileId)
         if (!profile) return
-        
-        const updated = { ...profile, mods: profile.mods.filter((m) => m.id !== modId) }
-        await get().updateProfile(updated)
+        await get().updateProfile({ ...profile, mods: profile.mods.filter((m) => m.id !== modId) })
       },
-      
+
       toggleMod: async (profileId, modId) => {
         const profile = get().profiles.find((p) => p.id === profileId)
         if (!profile) return
-        
-        const updated = {
+        await get().updateProfile({
           ...profile,
-          mods: profile.mods.map((m) => 
-            m.id === modId ? { ...m, enabled: !m.enabled } : m
-          ),
-        }
-        await get().updateProfile(updated)
+          mods: profile.mods.map((m) => (m.id === modId ? { ...m, enabled: !m.enabled } : m)),
+        })
       },
-      
+
       addResourcePack: async (profileId, pack) => {
         const profile = get().profiles.find((p) => p.id === profileId)
         if (!profile) return
-        
-        const updated = { 
-          ...profile, 
-          resource_packs: [...profile.resource_packs, { ...pack, priority: profile.resource_packs.length }] 
-        }
-        await get().updateProfile(updated)
+        await get().updateProfile({
+          ...profile,
+          resource_packs: [...profile.resource_packs, { ...pack, priority: profile.resource_packs.length }],
+        })
       },
-      
+
       removeResourcePack: async (profileId, packId) => {
         const profile = get().profiles.find((p) => p.id === profileId)
         if (!profile) return
-        
-        const updated = { 
-          ...profile, 
-          resource_packs: profile.resource_packs.filter((p) => p.id !== packId) 
-        }
-        await get().updateProfile(updated)
+        await get().updateProfile({
+          ...profile,
+          resource_packs: profile.resource_packs.filter((p) => p.id !== packId),
+        })
       },
-      
+
       reorderResourcePacks: async (profileId, packIds) => {
         const profile = get().profiles.find((p) => p.id === profileId)
         if (!profile) return
-        
         const packMap = new Map(profile.resource_packs.map((p) => [p.id, p]))
         const reordered = packIds.map((id, index) => ({ ...packMap.get(id)!, priority: index }))
-        
-        const updated = { ...profile, resource_packs: reordered }
-        await get().updateProfile(updated)
+        await get().updateProfile({ ...profile, resource_packs: reordered })
       },
     }),
     {
       name: 'profile-storage',
-      partialize: (state) => ({ 
+      partialize: (state) => ({
         profiles: state.profiles,
         selectedProfile: state.selectedProfile,
       }),

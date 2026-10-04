@@ -5,14 +5,15 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Modal, ConfirmDialog } from '../components/ui/Modal'
 import { useAuthStore } from '../store/authStore'
-import { formatDateTime } from '../utils/helpers'
+import { formatDate } from '../utils/helpers'
 
 export function AccountsPage() {
-  const { accounts, currentAccount, isLoading, error, loadAccounts, loginOffline, loginMicrosoft, logout, setCurrentAccount, refreshAccount } = useAuthStore()
+  const { accounts, currentAccount, isLoading, loadAccounts, loginOffline, loginMicrosoft, logout, setCurrentAccount, refreshToken } = useAuthStore()
   const [showOfflineModal, setShowOfflineModal] = useState(false)
   const [username, setUsername] = useState('')
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     loadAccounts()
@@ -21,27 +22,33 @@ export function AccountsPage() {
 
   const handleOfflineLogin = async () => {
     if (!username.trim()) return
+    setError(null)
     try {
       await loginOffline(username.trim())
       setShowOfflineModal(false)
       setUsername('')
-    } catch {
-      // error is in store
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
   const handleMicrosoftLogin = async () => {
+    setError(null)
     try {
       await loginMicrosoft()
-    } catch {
-      // error shown below; browser window was opened for OAuth
+    } catch (e) {
+      // The browser window was opened for OAuth; surface real failures.
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
   const handleRefresh = async (id: string) => {
     setBusyId(id)
+    setError(null)
     try {
-      await refreshAccount(id)
+      await refreshToken(id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusyId(null)
     }
@@ -65,9 +72,7 @@ export function AccountsPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="alert alert-red">{error}</div>
-      )}
+      {error && <div className="alert alert-red">{error}</div>}
 
       {accounts.length === 0 ? (
         <Card padding="lg" className="text-center">
@@ -108,12 +113,12 @@ export function AccountsPage() {
                       {isCurrent && <span className="pill-volt">active</span>}
                     </p>
                     <p className="mt-1.5 truncate font-mono text-[11px] text-slate-500">{account.uuid}</p>
-                    <p className="text-[11px] text-slate-500">Last used: {formatDateTime(account.last_used)}</p>
+                    <p className="text-[11px] text-slate-500">Last used: {formatDate(account.last_used)}</p>
                   </div>
                 </div>
                 <div className="mt-4 flex items-center gap-2 border-t border-white/[0.07] pt-3">
                   {!isCurrent && (
-                    <Button size="sm" variant="secondary" className="flex-1" onClick={() => void setCurrentAccount(account)}>
+                    <Button size="sm" variant="secondary" className="flex-1" onClick={() => void setCurrentAccount(account.id)}>
                       Use
                     </Button>
                   )}

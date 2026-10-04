@@ -1,3 +1,6 @@
+//! Java runtimes: auto-detect (JAVA_HOME, PATH, well-known dirs, managed),
+//! Temurin auto-download, and per-MC-version resolution.
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,7 +18,6 @@ pub struct JavaManager {
 impl JavaManager {
     pub async fn new() -> Self {
         let java_dir = crate::common::base_dir().join("java");
-
         tokio::fs::create_dir_all(&java_dir).await.ok();
 
         Self {
@@ -31,9 +33,9 @@ impl JavaManager {
     pub async fn detect_java(&self) -> Result<()> {
         let mut installations = Vec::new();
 
-        // Check JAVA_HOME
+        // JAVA_HOME
         if let Ok(java_home) = std::env::var("JAVA_HOME") {
-            let java_path = PathBuf::from(java_home).join("bin").join(if cfg!(target_os = "windows") { "java.exe" } else { "java" });
+            let java_path = PathBuf::from(java_home).join("bin").join(java_bin());
             if java_path.exists() {
                 if let Ok(version) = self.get_java_version(&java_path).await {
                     installations.push(JavaInstallation {
@@ -47,10 +49,11 @@ impl JavaManager {
             }
         }
 
-        // Check PATH
+        // PATH
         if let Ok(path) = std::env::var("PATH") {
-            for dir in path.split(if cfg!(target_os = "windows") { ";" } else { ":" }) {
-                let java_path = PathBuf::from(dir).join(if cfg!(target_os = "windows") { "java.exe" } else { "java" });
+            let sep = if cfg!(target_os = "windows") { ";" } else { ":" };
+            for dir in path.split(sep) {
+                let java_path = PathBuf::from(dir).join(java_bin());
                 if java_path.exists() {
                     if let Ok(version) = self.get_java_version(&java_path).await {
                         if !installations.iter().any(|i| i.path == java_path) {
@@ -67,9 +70,8 @@ impl JavaManager {
             }
         }
 
-        // Check common installation directories
-        let common_paths = self.get_common_java_paths();
-        for path in common_paths {
+        // Well-known installation directories
+        for path in self.get_common_java_paths() {
             if path.exists() {
                 if let Ok(version) = self.get_java_version(&path).await {
                     if !installations.iter().any(|i| i.path == path) {
@@ -85,12 +87,12 @@ impl JavaManager {
             }
         }
 
-        // Check managed installations
+        // Managed installations
         let managed_dir = self.java_dir.join("managed");
         if managed_dir.exists() {
             let mut entries = tokio::fs::read_dir(&managed_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
-                let java_path = entry.path().join("bin").join(if cfg!(target_os = "windows") { "java.exe" } else { "java" });
+                let java_path = entry.path().join("bin").join(java_bin());
                 if java_path.exists() {
                     if let Ok(version) = self.get_java_version(&java_path).await {
                         installations.push(JavaInstallation {
@@ -105,9 +107,7 @@ impl JavaManager {
             }
         }
 
-        let mut installs = self.installations.write().await;
-        *installs = installations;
-
+        *self.installations.write().await = installations;
         Ok(())
     }
 
@@ -124,8 +124,8 @@ impl JavaManager {
                 paths.push(pf.join("Zulu"));
                 paths.push(pf.join("BellSoft").join("LibericaJDK"));
             }
-            if let Ok(program_files_x86) = std::env::var("ProgramFiles(x86)") {
-                paths.push(PathBuf::from(program_files_x86).join("Java"));
+            if let Ok(pfx86) = std::env::var("ProgramFiles(x86)") {
+                paths.push(PathBuf::from(pfx86).join("Java"));
             }
         } else if cfg!(target_os = "macos") {
             paths.push(PathBuf::from("/Library/Java/JavaVirtualMachines"));
@@ -145,19 +145,14 @@ impl JavaManager {
         cmd.arg("-version");
         crate::common::hide_console_std(&mut cmd);
         let output = cmd.output()?;
-        
+
         let stderr = String::from_utf8_lossy(&output.stderr);
         let version_line = stderr.lines().next().unwrap_or("");
-        
-        // Parse version like: openjdk version "21.0.2" 2024-01-16
-        let version_str = version_line
-            .split('"')
-            .nth(1)
-            .unwrap_or("")
-            .to_string();
 
+        // Parse version like: openjdk version "21.0.2" 2024-01-16
+        let version_str = version_line.split('"').nth(1).unwrap_or("").to_string();
         let major = version_str.split('.').next().unwrap_or("0").parse::<u32>().unwrap_or(0);
-        
+
         Ok(JavaVersion {
             major,
             full: version_str,
@@ -168,34 +163,32 @@ impl JavaManager {
         let mut cmd = Command::new(java_path);
         cmd.arg("-version");
         crate::common::hide_console_std(&mut cmd);
-        let output = cmd.output();
-        
-        if let Ok(output) = output {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-            
-            if stderr.contains("eclipse") || stderr.contains("adoptium") || stderr.contains("temurin") {
-                return JavaVendor::EclipseAdoptium;
-            }
-            if stderr.contains("microsoft") {
-                return JavaVendor::Microsoft;
-            }
-            if stderr.contains("amazon") || stderr.contains("corretto") {
-                return JavaVendor::AmazonCorretto;
-            }
-            if stderr.contains("azul") || stderr.contains("zulu") {
-                return JavaVendor::AzulZulu;
-            }
-            if stderr.contains("bellsoft") || stderr.contains("liberica") {
-                return JavaVendor::BellSoftLiberica;
-            }
-            if stderr.contains("oracle") {
-                return JavaVendor::Oracle;
-            }
-            if stderr.contains("openjdk") {
-                return JavaVendor::OpenJDK;
-            }
+        let Ok(output) = cmd.output() else {
+            return JavaVendor::Unknown;
+        };
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+
+        if stderr.contains("eclipse") || stderr.contains("adoptium") || stderr.contains("temurin") {
+            return JavaVendor::EclipseAdoptium;
         }
-        
+        if stderr.contains("microsoft") {
+            return JavaVendor::Microsoft;
+        }
+        if stderr.contains("amazon") || stderr.contains("corretto") {
+            return JavaVendor::AmazonCorretto;
+        }
+        if stderr.contains("azul") || stderr.contains("zulu") {
+            return JavaVendor::AzulZulu;
+        }
+        if stderr.contains("bellsoft") || stderr.contains("liberica") {
+            return JavaVendor::BellSoftLiberica;
+        }
+        if stderr.contains("oracle") {
+            return JavaVendor::Oracle;
+        }
+        if stderr.contains("openjdk") {
+            return JavaVendor::OpenJDK;
+        }
         JavaVendor::Unknown
     }
 
@@ -203,11 +196,8 @@ impl JavaManager {
         let mut cmd = Command::new(java_path);
         cmd.arg("-version");
         crate::common::hide_console_std(&mut cmd);
-        let output = cmd.output();
-        
-        if let Ok(output) = output {
+        if let Ok(output) = cmd.output() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-            
             if stderr.contains("64-bit") || stderr.contains("x86_64") || stderr.contains("aarch64") {
                 return JavaArchitecture::X64;
             }
@@ -218,7 +208,7 @@ impl JavaManager {
                 return JavaArchitecture::ARM64;
             }
         }
-        
+
         if cfg!(target_arch = "x86_64") {
             JavaArchitecture::X64
         } else if cfg!(target_arch = "aarch64") {
@@ -229,21 +219,26 @@ impl JavaManager {
     }
 
     /// Probe the major version of a java binary without registering it.
-    /// Used to validate frontend-provided / custom paths before launch.
     pub async fn probe_major(&self, java_path: &Path) -> Option<u32> {
         self.get_java_version(java_path).await.map(|v| v.major).ok()
     }
 
-    pub async fn download_java(&self, version: u32, vendor: JavaVendor, architecture: JavaArchitecture) -> Result<JavaInstallation> {
+    pub async fn download_java(
+        &self,
+        version: u32,
+        vendor: JavaVendor,
+        architecture: JavaArchitecture,
+    ) -> Result<JavaInstallation> {
         let download_url = self.get_download_url(version, &vendor, &architecture)?;
-        
-        let install_dir = self.java_dir.join("managed").join(format!("{}-{}", vendor.to_string().to_lowercase(), version));
+
+        let install_dir = self
+            .java_dir
+            .join("managed")
+            .join(format!("{}-{}", vendor.dir_name(), version));
         tokio::fs::create_dir_all(&install_dir).await?;
 
-        // Download and extract.
         // NOTE: the archive MUST keep a proper extension — Windows
-        // Expand-Archive refuses extensionless files, which used to leave
-        // a dead `java_archive` behind and silently fall back to system Java.
+        // Expand-Archive refuses extensionless files.
         let archive_name = if cfg!(target_os = "windows") {
             "java_archive.zip"
         } else {
@@ -254,16 +249,14 @@ impl JavaManager {
         let bytes = response.bytes().await?;
         tokio::fs::write(&archive_path, bytes).await?;
 
-        // Extract based on platform
         if let Err(e) = self.extract_java(&archive_path, &install_dir).await {
-            // Don't leave a dead archive behind — it would look like
-            // a finished download on the next run.
+            // Don't leave a dead archive behind.
             tokio::fs::remove_file(&archive_path).await.ok();
             return Err(e);
         }
         tokio::fs::remove_file(&archive_path).await.ok();
 
-        let java_path = install_dir.join("bin").join(if cfg!(target_os = "windows") { "java.exe" } else { "java" });
+        let java_path = install_dir.join("bin").join(java_bin());
         let java_version = self.get_java_version(&java_path).await?;
 
         let installation = JavaInstallation {
@@ -274,22 +267,29 @@ impl JavaManager {
             source: JavaSource::Managed,
         };
 
-        let mut installations = self.installations.write().await;
-        installations.push(installation.clone());
-
+        self.installations.write().await.push(installation.clone());
         Ok(installation)
     }
 
-    fn get_download_url(&self, version: u32, vendor: &JavaVendor, architecture: &JavaArchitecture) -> Result<String> {
+    fn get_download_url(
+        &self,
+        version: u32,
+        vendor: &JavaVendor,
+        architecture: &JavaArchitecture,
+    ) -> Result<String> {
         let arch_str = match architecture {
             JavaArchitecture::X64 => "x64",
             JavaArchitecture::ARM64 => "aarch64",
             JavaArchitecture::X86 => "x86",
         };
 
-        let os = if cfg!(target_os = "windows") { "windows" } 
-            else if cfg!(target_os = "macos") { "macos" } 
-            else { "linux" };
+        let os = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
 
         let ext = if cfg!(target_os = "windows") { "zip" } else { "tar.gz" };
 
@@ -310,7 +310,7 @@ impl JavaManager {
                 format!("https://download.bell-sw.com/java/{}/bellsoft-jdk{}-{}-{}.{}", version, version, os, arch_str, ext)
             }
             _ => {
-                // Default to Adoptium (v3 API: .../latest/<ver>/ga/<os>/<arch>/jdk/hotspot/normal/eclipse)
+                // Default to Adoptium
                 format!("https://api.adoptium.net/v3/binary/latest/{}/{}/{}/{}/{}/{}/{}", version, "ga", os, arch_str, "jdk", "hotspot", "normal/eclipse")
             }
         };
@@ -324,26 +324,41 @@ impl JavaManager {
             let mut cmd = Command::new("powershell");
             cmd.args([
                 "-Command",
-                &format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", archive_path.display(), dest_dir.display()),
+                &format!(
+                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                    archive_path.display(),
+                    dest_dir.display()
+                ),
             ]);
             crate::common::hide_console_std(&mut cmd);
             let output = cmd.output()?;
 
             if !output.status.success() {
-                return Err(anyhow::anyhow!("Failed to extract: {}", String::from_utf8_lossy(&output.stderr)));
+                return Err(anyhow::anyhow!(
+                    "Failed to extract: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
             // Vendor zips contain a single top-level folder (e.g. jdk-17.0.x/)
-            // holding bin/. Flatten it so <dest>/bin/java.exe exists, matching
-            // the managed layout the launcher scans.
+            // holding bin/. Flatten it so <dest>/bin/java.exe exists.
             flatten_single_top_level(dest_dir).await?;
         } else {
             // Use tar for tar.gz
             let output = Command::new("tar")
-                .args(["-xzf", archive_path.to_str().unwrap(), "-C", dest_dir.to_str().unwrap(), "--strip-components=1"])
+                .args([
+                    "-xzf",
+                    archive_path.to_str().unwrap(),
+                    "-C",
+                    dest_dir.to_str().unwrap(),
+                    "--strip-components=1",
+                ])
                 .output()?;
 
             if !output.status.success() {
-                return Err(anyhow::anyhow!("Failed to extract: {}", String::from_utf8_lossy(&output.stderr)));
+                return Err(anyhow::anyhow!(
+                    "Failed to extract: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
         Ok(())
@@ -351,10 +366,8 @@ impl JavaManager {
 
     /// Find best matching installation for required major version.
     /// Exact major wins; otherwise a slightly newer runtime is acceptable for
-    /// modern MC (>=16, see java_acceptable). Never returns a wildly newer
-    /// runtime (e.g. Java 26 for a Java 17 game) — old ASM/Mixin stacks crash
-    /// on their class files ("Unsupported class file major version").
-    /// Use ensure_java() when provisioning (auto-download) is desired.
+    /// modern MC (>=16). Never a wildly newer runtime (old ASM/Mixin stacks
+    /// crash on their class files). Use ensure_java() for auto-download.
     pub async fn find_best(&self, required_major: u32) -> Option<JavaInstallation> {
         let installs = self.installations.read().await;
         if installs.is_empty() {
@@ -370,18 +383,14 @@ impl JavaManager {
         // acceptable newer runtime (lowest), managed preferred
         let mut newer: Vec<&JavaInstallation> = installs
             .iter()
-            .filter(|i| {
-                i.version.major > required_major
-                    && java_acceptable(required_major, i.version.major)
-            })
+            .filter(|i| i.version.major > required_major && java_acceptable(required_major, i.version.major))
             .collect();
         newer.sort_by_key(|i| (i.version.major, source_rank(&i.source)));
         newer.into_iter().next().cloned()
     }
 
     /// Legacy last-resort pick (closest newer for modern MC, else highest).
-    /// Only for offline fallback — may return an incompatible runtime, so
-    /// callers must warn. Prefer ensure_java().
+    /// Only for offline fallback — may return an incompatible runtime.
     async fn find_closest_legacy(&self, required_major: u32) -> Option<JavaInstallation> {
         let installs = self.installations.read().await;
         if installs.is_empty() {
@@ -440,6 +449,14 @@ impl JavaManager {
     }
 }
 
+fn java_bin() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "java.exe"
+    } else {
+        "java"
+    }
+}
+
 fn source_rank(source: &JavaSource) -> u8 {
     match source {
         JavaSource::Managed => 0,
@@ -451,10 +468,8 @@ fn source_rank(source: &JavaSource) -> u8 {
 }
 
 /// Tolerance for newer runtimes on modern MC (>=16): exact major preferred,
-/// but a slightly newer one still runs the game (e.g. Java 21 for a Java 17
-/// game). Too-new runtimes break old ASM/Mixin stacks, which fail parsing
-/// their class files ("Unsupported class file major version 70" on Java 26).
-/// Legacy MC (<16, i.e. Java 8 lines) requires the exact major.
+/// but a slightly newer one still runs the game. Too-new runtimes break old
+/// ASM/Mixin stacks. Legacy MC (<16) requires the exact major.
 const NEWER_JAVA_TOLERANCE: u32 = 4;
 
 pub fn java_acceptable(required_major: u32, actual_major: u32) -> bool {
@@ -462,8 +477,7 @@ pub fn java_acceptable(required_major: u32, actual_major: u32) -> bool {
         return true;
     }
     if required_major >= 16 {
-        return actual_major > required_major
-            && actual_major - required_major <= NEWER_JAVA_TOLERANCE;
+        return actual_major > required_major && actual_major - required_major <= NEWER_JAVA_TOLERANCE;
     }
     false
 }
@@ -497,16 +511,16 @@ pub enum JavaVendor {
 }
 
 impl JavaVendor {
-    fn to_string(&self) -> String {
+    fn dir_name(&self) -> &'static str {
         match self {
-            JavaVendor::EclipseAdoptium => "Eclipse Adoptium".to_string(),
-            JavaVendor::Microsoft => "Microsoft".to_string(),
-            JavaVendor::AmazonCorretto => "Amazon Corretto".to_string(),
-            JavaVendor::AzulZulu => "Azul Zulu".to_string(),
-            JavaVendor::BellSoftLiberica => "BellSoft Liberica".to_string(),
-            JavaVendor::Oracle => "Oracle".to_string(),
-            JavaVendor::OpenJDK => "OpenJDK".to_string(),
-            JavaVendor::Unknown => "Unknown".to_string(),
+            JavaVendor::EclipseAdoptium => "eclipse_adoptium",
+            JavaVendor::Microsoft => "microsoft",
+            JavaVendor::AmazonCorretto => "amazon_corretto",
+            JavaVendor::AzulZulu => "azul_zulu",
+            JavaVendor::BellSoftLiberica => "bellsoft_liberica",
+            JavaVendor::Oracle => "oracle",
+            JavaVendor::OpenJDK => "openjdk",
+            JavaVendor::Unknown => "unknown",
         }
     }
 }
@@ -531,13 +545,8 @@ pub enum JavaSource {
 
 /// Move the contents of a single top-level folder up one level.
 /// Turns `<dest>/jdk-17.0.x/bin/java.exe` into `<dest>/bin/java.exe`.
-/// No-op when `<dest>/bin/java.exe` already exists.
 async fn flatten_single_top_level(dest_dir: &Path) -> Result<()> {
-    let bin_name = if cfg!(target_os = "windows") {
-        "java.exe"
-    } else {
-        "java"
-    };
+    let bin_name = java_bin();
     if dest_dir.join("bin").join(bin_name).exists() {
         return Ok(());
     }
@@ -571,16 +580,14 @@ pub async fn detect_java(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<JavaInstallation>, String> {
     state.java.detect_java().await.map_err(|e| e.to_string())?;
-    let installations = state.java.installations.read().await;
-    Ok(installations.clone())
+    Ok(state.java.installations.read().await.clone())
 }
 
 #[tauri::command]
 pub async fn get_java_installations(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<JavaInstallation>, String> {
-    let installations = state.java.installations.read().await;
-    Ok(installations.clone())
+    Ok(state.java.installations.read().await.clone())
 }
 
 #[tauri::command]
@@ -590,7 +597,11 @@ pub async fn download_java(
     vendor: JavaVendor,
     architecture: JavaArchitecture,
 ) -> Result<JavaInstallation, String> {
-    state.java.download_java(version, vendor, architecture).await.map_err(|e| e.to_string())
+    state
+        .java
+        .download_java(version, vendor, architecture)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -1,3 +1,7 @@
+//! Accounts: offline (UUID v3) + Microsoft OAuth (in-app window, desktop
+//! redirect), stored locally in `accounts.json`. No secrets in code — the
+//! Microsoft client id is the public one historically used by launchers.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,8 +25,6 @@ pub struct Account {
     pub refresh_token: Option<String>,
     pub token_expires_at: Option<DateTime<Utc>>,
     pub account_type: AccountType,
-    pub skin_url: Option<String>,
-    pub cape_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_used: DateTime<Utc>,
 }
@@ -88,28 +90,6 @@ pub struct MinecraftAuthResponse {
 pub struct MinecraftProfile {
     pub id: String,
     pub name: String,
-    #[serde(default)]
-    pub skins: Vec<Skin>,
-    #[serde(default)]
-    pub capes: Vec<Cape>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Skin {
-    pub id: String,
-    pub state: String,
-    pub url: String,
-    #[serde(default)]
-    pub variant: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Cape {
-    pub id: String,
-    pub state: String,
-    pub url: String,
-    #[serde(default)]
-    pub alias: Option<String>,
 }
 
 pub struct AuthManager {
@@ -307,17 +287,19 @@ pub async fn set_current_account(
     state: tauri::State<'_, crate::AppState>,
     account_id: String,
 ) -> Result<Account, String> {
-    {
+    let acc = {
         let accounts = state.auth.accounts.read().await;
-        let acc = accounts
+        accounts
             .get(&account_id)
             .cloned()
-            .ok_or_else(|| "Account not found".to_string())?;
+            .ok_or_else(|| "Account not found".to_string())?
+    };
+    {
         let mut current = state.auth.current_account.write().await;
         *current = Some(account_id);
-        state.auth.save_accounts().await.map_err(|e| e.to_string())?;
-        Ok(acc)
     }
+    state.auth.save_accounts().await.map_err(|e| e.to_string())?;
+    Ok(acc)
 }
 
 #[tauri::command]
@@ -325,28 +307,28 @@ pub async fn refresh_token(
     state: tauri::State<'_, crate::AppState>,
     account_id: String,
 ) -> Result<Account, String> {
-    let account_clone = {
+    let stored = {
         let accounts = state.auth.accounts.read().await;
         accounts
             .get(&account_id)
             .cloned()
             .ok_or_else(|| "Account not found".to_string())?
     };
-    if account_clone.account_type != AccountType::Microsoft {
+    if stored.account_type != AccountType::Microsoft {
         return Err("Cannot refresh offline account".to_string());
     }
-    let new_account = state
+    let refreshed = state
         .auth
         .microsoft_auth
-        .refresh_token(&account_clone)
+        .refresh_token(&stored)
         .await
         .map_err(|e| e.to_string())?;
     {
         let mut accounts = state.auth.accounts.write().await;
-        accounts.insert(account_id, new_account.clone());
+        accounts.insert(account_id, refreshed.clone());
     }
     state.auth.save_accounts().await.map_err(|e| e.to_string())?;
-    Ok(new_account)
+    Ok(refreshed)
 }
 
 #[tauri::command]

@@ -1,28 +1,19 @@
-'use client'
-
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useThemeStore } from '../store/authStore'
 
-interface ThemeContextType {
-  theme: 'light' | 'dark'
-  toggleTheme: () => void
-  setTheme: (theme: 'light' | 'dark' | 'system') => void
-}
-
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
-
+// Kept minimal on purpose: the zustand store is the source of truth.
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const { resolvedTheme, setTheme, initializeTheme } = useThemeStore()
+  const { initializeTheme } = useThemeStore()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
     setMounted(true)
     initializeTheme()
-    
+
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const handleChange = () => initializeTheme()
     mediaQuery.addEventListener('change', handleChange)
-    
+
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [initializeTheme])
 
@@ -30,22 +21,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return <>{children}</>
   }
 
-  const toggleTheme = () => {
-    const newTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
-    setTheme(newTheme)
-  }
-
-  return (
-    <ThemeContext.Provider value={{ theme: resolvedTheme, toggleTheme, setTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  )
+  return <>{children}</>
 }
 
 export function useTheme() {
-  const context = useContext(ThemeContext)
-  if (context === undefined) {
-    throw new Error('useTheme must be used within a ThemeProvider')
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme)
+  const setTheme = useThemeStore((s) => s.setTheme)
+  return {
+    theme: resolvedTheme,
+    toggleTheme: () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark'),
+    setTheme,
   }
-  return context
 }

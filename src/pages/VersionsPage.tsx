@@ -112,7 +112,8 @@ export function VersionsPage() {
       // Auto-select the right loader for this line (Fabric 1.16+, Forge on legacy).
       let loader: Profile['mod_loader'] = profile?.mod_loader ?? 'none'
       try {
-        loader = (await modLoaderApi.resolveLoader(version.id)).mod_loader
+        const resolved = await modLoaderApi.resolveLoader(version.id)
+        loader = resolved.mod_loader === 'liteloader' ? 'none' : resolved.mod_loader
       } catch {
         // offline / unknown line — keep current loader
       }
@@ -177,9 +178,7 @@ export function VersionsPage() {
         </div>
       </div>
 
-      {notice && (
-        <div className="alert alert-green">{notice}</div>
-      )}
+      {notice && <div className="alert alert-green">{notice}</div>}
 
       {showFilters && (
         <Card padding="md" className="animate-slide-down">

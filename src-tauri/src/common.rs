@@ -1,9 +1,11 @@
+//! Shared filesystem layout + OS helpers for all backend modules.
+//!
+//! Layout (next to vanilla `.minecraft`):
+//! `.../DontCamCl/{versions,libraries,assets,instances,profiles,java,...}`
+
 use std::path::PathBuf;
 
-/// Vanilla `.minecraft` location, per OS:
-/// - Windows: %APPDATA%\.minecraft
-/// - macOS: ~/Library/Application Support/minecraft
-/// - Linux: ~/.minecraft
+/// Vanilla `.minecraft` location, per OS.
 pub fn minecraft_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -27,8 +29,7 @@ pub fn minecraft_dir() -> PathBuf {
     }
 }
 
-/// Base data dir, right next to vanilla `.minecraft`, vanilla-like layout:
-/// `.../DontCamCl/{versions,libraries,assets,instances,profiles,java,...}`
+/// Base data dir, right next to vanilla `.minecraft`.
 pub fn base_dir() -> PathBuf {
     let parent = minecraft_dir()
         .parent()
@@ -38,8 +39,6 @@ pub fn base_dir() -> PathBuf {
 }
 
 /// Hide the console window of a child process (Windows only).
-/// Console-subsystem executables (java.exe, cmd, powershell) would otherwise
-/// flash a terminal window every time we spawn them.
 #[cfg(target_os = "windows")]
 pub fn hide_console_std(cmd: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
@@ -49,8 +48,10 @@ pub fn hide_console_std(cmd: &mut std::process::Command) {
 #[cfg(not(target_os = "windows"))]
 pub fn hide_console_std(_cmd: &mut std::process::Command) {}
 
+/// Hide the console window of a child process (Windows only).
 #[cfg(target_os = "windows")]
 pub fn hide_console_tokio(cmd: &mut tokio::process::Command) {
+    // tokio::process::Command has an inherent creation_flags on Windows.
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 }
 
@@ -58,7 +59,6 @@ pub fn hide_console_tokio(cmd: &mut tokio::process::Command) {
 pub fn hide_console_tokio(_cmd: &mut tokio::process::Command) {}
 
 /// Prefer `javaw.exe` over `java.exe` on Windows: same JVM, no console window.
-/// Falls back to the original path when javaw is not available.
 pub fn prefer_javaw(java: &std::path::Path) -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -74,11 +74,6 @@ pub fn prefer_javaw(java: &std::path::Path) -> PathBuf {
         }
     }
     java.to_path_buf()
-}
-
-pub async fn ensure_dir(path: &PathBuf) -> anyhow::Result<()> {
-    tokio::fs::create_dir_all(path).await?;
-    Ok(())
 }
 
 /// Game dir resolution:
@@ -104,7 +99,6 @@ pub async fn game_dir_for_profile(
     let mut dir = base_dir().join("instances");
     dir = dir.join(profile_id.unwrap_or("global"));
     let _ = tokio::fs::create_dir_all(&dir).await;
-    // ensure subdirs exist (mods, resourcepacks, saves, etc.)
     for sub in ["mods", "resourcepacks", "saves", "screenshots", "logs", "config"] {
         let _ = tokio::fs::create_dir_all(dir.join(sub)).await;
     }
@@ -127,10 +121,8 @@ pub fn natives_dir(version_id: &str) -> PathBuf {
     versions_dir().join(version_id).join("natives")
 }
 
-/// Recommended Java major for a given MC version.
-/// 1.8–1.15 -> 8 (Forge/legacy era), 1.16–1.20.4 -> 17, 1.20.5+ -> 21.
-/// NOTE: 1.16/1.17 officially ran on 8/16, but our bundled Fabric mods
-/// declare `java >= 17` (compiled target 17) — and 1.16/1.17 run fine on 17.
+/// Recommended Java major for a given MC version:
+/// 1.8–1.15 -> 8, 1.16–1.20.4 -> 17, 1.20.5+ -> 21.
 pub fn recommended_java_major(mc_version: &str) -> u32 {
     let v = mc_version.trim();
     // strip loader suffixes like "1.20.1-forge-..." -> "1.20.1"
@@ -202,9 +194,7 @@ fn is_known_arch_token(suffix: &str) -> bool {
 }
 
 /// True when maven coordinates carry a natives classifier
-/// (4th part starting with `natives-`), e.g. `org.lwjgl:lwjgl:3.3.3:natives-windows`.
-/// (Netty-style `...:linux-x86_64` classifiers are NOT included on purpose —
-/// those jars stay on the classpath like vanilla does.)
+/// (4th part starting with `natives-`).
 pub fn is_natives_library(coords: &str) -> bool {
     coords
         .split(':')
@@ -212,8 +202,7 @@ pub fn is_natives_library(coords: &str) -> bool {
         .map_or(false, |c| c.starts_with("natives-"))
 }
 
-/// Does a natives classifier (e.g. `natives-windows-arm64`, `linux-x86_64`,
-/// `natives-macos`, `natives-macos-patch`) target the current OS + architecture?
+/// Does a natives classifier target the current OS + architecture?
 /// Non-arch suffixes (like `-patch`) match on OS alone — over-extracting is
 /// harmless, under-extracting crashes the game.
 pub fn native_classifier_matches(classifier: &str) -> bool {
@@ -245,12 +234,10 @@ pub fn native_classifier_matches(classifier: &str) -> bool {
 
     let suffix = remainder.trim_start_matches('-');
     if suffix.is_empty() {
-        // No arch suffix (e.g. `natives-windows`, `natives-linux`):
-        // historically x64 artifacts; linux ships a single jar for all archs.
+        // No arch suffix: historically x64 artifacts; linux ships one jar for all archs.
         return arch == "x64" || os == "linux";
     }
     if !is_known_arch_token(suffix) {
-        // e.g. `natives-macos-patch` — match on OS alone.
         return true;
     }
     arch_matches(suffix, arch)

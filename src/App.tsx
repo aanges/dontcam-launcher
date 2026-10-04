@@ -5,8 +5,8 @@ import { OnboardingModal } from './components/OnboardingModal'
 import { HomePage } from './pages/HomePage'
 import { VersionsPage } from './pages/VersionsPage'
 import { ProfilesPage } from './pages/ProfilesPage'
-import { SettingsPage } from './pages/SettingsPage'
 import { AccountsPage } from './pages/AccountsPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { useAuthStore } from './store/authStore'
 import { useProfileStore } from './store/profileStore'
 import { useSettingsStore } from './store/settingsStore'
@@ -43,18 +43,18 @@ export default function App() {
 
   return (
     <>
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/versions" element={<VersionsPage />} />
-        <Route path="/profiles" element={<ProfilesPage />} />
-        <Route path="/accounts" element={<AccountsPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
-    <OnboardingModal open={showOnboarding} onClose={() => setOnboardingDismissed(true)} />
-    <UpdateDialog />
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/versions" element={<VersionsPage />} />
+          <Route path="/profiles" element={<ProfilesPage />} />
+          <Route path="/accounts" element={<AccountsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+      <OnboardingModal open={showOnboarding} onClose={() => setOnboardingDismissed(true)} />
+      <UpdateDialog />
     </>
   )
 }

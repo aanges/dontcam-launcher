@@ -195,18 +195,10 @@ export function HomePage() {
         </div>
       </section>
 
-      {launchError && (
-        <div className="alert alert-red">{launchError}</div>
-      )}
-      {installError && (
-        <div className="alert alert-red">Install failed: {installError}</div>
-      )}
-      {installWarning && (
-        <div className="alert alert-yellow">{installWarning}</div>
-      )}
-      {dontcamOffline && (
-        <div className="alert alert-yellow">{dontcamOffline}</div>
-      )}
+      {launchError && <div className="alert alert-red">{launchError}</div>}
+      {installError && <div className="alert alert-red">Install failed: {installError}</div>}
+      {installWarning && <div className="alert alert-yellow">{installWarning}</div>}
+      {dontcamOffline && <div className="alert alert-yellow">{dontcamOffline}</div>}
       {!currentAccount && (
         <div className="alert alert-yellow">
           No account selected. Go to <Link to="/accounts" className="font-bold underline">Accounts</Link> and add an offline or Microsoft account.

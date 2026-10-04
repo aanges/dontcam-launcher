@@ -1,21 +1,9 @@
 import { Minus, Maximize2, X } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { LogoTile } from '../Logo'
-import { invoke } from '@tauri-apps/api/core'
+import { windowApi } from '../../tauri/window'
 
 export function TitleBar() {
-  const handleMinimize = () => {
-    invoke('minimize_window').catch(console.error)
-  }
-
-  const handleMaximize = () => {
-    invoke('toggle_maximize').catch(console.error)
-  }
-
-  const handleClose = () => {
-    invoke('close_window').catch(console.error)
-  }
-
   return (
     <header className="drag-region z-50 flex h-12 shrink-0 items-center justify-between border-b border-white/[0.07] bg-black/60 pl-4 pr-2 backdrop-blur-xl">
       <div className="flex items-center gap-3">
@@ -35,7 +23,7 @@ export function TitleBar() {
           variant="ghost"
           size="sm"
           className="h-8 w-10 !rounded-lg text-slate-400 hover:!bg-white/10 hover:!text-white"
-          onClick={handleMinimize}
+          onClick={() => windowApi.minimize().catch(console.error)}
           aria-label="Minimize"
         >
           <Minus className="h-4 w-4" />
@@ -44,7 +32,7 @@ export function TitleBar() {
           variant="ghost"
           size="sm"
           className="h-8 w-10 !rounded-lg text-slate-400 hover:!bg-white/10 hover:!text-white"
-          onClick={handleMaximize}
+          onClick={() => windowApi.toggleMaximize().catch(console.error)}
           aria-label="Maximize"
         >
           <Maximize2 className="h-3.5 w-3.5" />
@@ -53,7 +41,7 @@ export function TitleBar() {
           variant="ghost"
           size="sm"
           className="h-8 w-10 !rounded-lg text-slate-400 hover:!bg-red-500 hover:!text-white"
-          onClick={handleClose}
+          onClick={() => windowApi.close().catch(console.error)}
           aria-label="Close"
         >
           <X className="h-4 w-4" />

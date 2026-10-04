@@ -10,7 +10,7 @@ import { useThemeStore } from '../store/authStore'
 import { useUpdateStore } from '../store/updateStore'
 import { useConsoleStore } from '../store/consoleStore'
 import { javaApi, utilsApi } from '../tauri/api'
-import type { JavaInstallation } from '../types'
+import type { JavaInstallation, Settings } from '../types'
 
 function SectionTitle({ icon: Icon, title, hint }: { icon: React.ComponentType<{ className?: string }>; title: string; hint?: string }) {
   return (
@@ -79,6 +79,11 @@ export function SettingsPage() {
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
+
+  const setUi = (patch: Partial<Settings['ui']>) => updateSettings({ ui: { ...settings.ui, ...patch } })
+  const setJava = (patch: Partial<Settings['java']>) => updateSettings({ java: { ...settings.java, ...patch } })
+  const setGame = (patch: Partial<Settings['game']>) => updateSettings({ game: { ...settings.game, ...patch } })
+  const setAdvanced = (patch: Partial<Settings['advanced']>) => updateSettings({ advanced: { ...settings.advanced, ...patch } })
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -153,8 +158,8 @@ export function SettingsPage() {
                 />
               </div>
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                <Checkbox label="Compact mode" checked={settings.ui.compact_mode} onChange={(e) => void updateSettings({ ui: { ...settings.ui, compact_mode: e.target.checked } })} />
-                <Checkbox label="Animations" checked={settings.ui.animations} onChange={(e) => void updateSettings({ ui: { ...settings.ui, animations: e.target.checked } })} />
+                <Checkbox label="Compact mode" checked={settings.ui.compact_mode} onChange={(e) => void setUi({ compact_mode: e.target.checked })} />
+                <Checkbox label="Animations" checked={settings.ui.animations} onChange={(e) => void setUi({ animations: e.target.checked })} />
               </div>
             </Card>
             <Card padding="md">
@@ -185,19 +190,19 @@ export function SettingsPage() {
                   type="number"
                   min={256}
                   value={settings.java.memory_allocation.min}
-                  onChange={(e) => void updateSettings({ java: { ...settings.java, memory_allocation: { ...settings.java.memory_allocation, min: parseInt(e.target.value) || 1 } } })}
+                  onChange={(e) => void setJava({ memory_allocation: { ...settings.java.memory_allocation, min: parseInt(e.target.value) || 1 } })}
                 />
                 <Input
                   label="Max memory"
                   type="number"
                   min={512}
                   value={settings.java.memory_allocation.max}
-                  onChange={(e) => void updateSettings({ java: { ...settings.java, memory_allocation: { ...settings.java.memory_allocation, max: parseInt(e.target.value) || 4 } } })}
+                  onChange={(e) => void setJava({ memory_allocation: { ...settings.java.memory_allocation, max: parseInt(e.target.value) || 4 } })}
                 />
                 <Select
                   label="Unit"
                   value={settings.java.memory_allocation.unit}
-                  onChange={(e) => void updateSettings({ java: { ...settings.java, memory_allocation: { ...settings.java.memory_allocation, unit: e.target.value as 'MB' | 'GB' } } })}
+                  onChange={(e) => void setJava({ memory_allocation: { ...settings.java.memory_allocation, unit: e.target.value as 'MB' | 'GB' } })}
                   options={[
                     { value: 'MB', label: 'MB' },
                     { value: 'GB', label: 'GB' },
@@ -216,8 +221,8 @@ export function SettingsPage() {
                 <div className="space-y-2">
                   {javaList.map((j, i) => (
                     <div key={i} className="rounded-xl border border-white/[0.07] bg-black/40 p-3">
-                      <p className="font-display text-sm font-bold text-white">Java {String((j.version as unknown as { major: number }).major)} <span className="font-mono font-normal text-slate-400">• {(j.version as unknown as { full: string }).full}</span></p>
-                      <p className="mt-0.5 break-all font-mono text-[11px] text-slate-500">{String(j.path)} • {String(j.vendor)} • {String(j.source)}</p>
+                      <p className="font-display text-sm font-bold text-white">Java {j.version.major} <span className="font-mono font-normal text-slate-400">• {j.version.full}</span></p>
+                      <p className="mt-0.5 break-all font-mono text-[11px] text-slate-500">{j.path} • {j.vendor} • {j.source}</p>
                     </div>
                   ))}
                 </div>
@@ -226,7 +231,7 @@ export function SettingsPage() {
                 <h4 className="mb-2 flex items-center gap-2 font-display text-sm font-bold text-white"><Download className="h-4 w-4 text-primary-300" /> Download Java (Eclipse Temurin)</h4>
                 <div className="flex flex-wrap gap-2">
                   {[8, 17, 21].map((major) => {
-                    const hasIt = javaList.some((j) => (j.version as unknown as { major: number }).major === major)
+                    const hasIt = javaList.some((j) => j.version.major === major)
                     const downloading = downloadingJava === major
                     return (
                       <Button
@@ -242,16 +247,14 @@ export function SettingsPage() {
                     )
                   })}
                 </div>
-                {javaError && (
-                  <p className="mt-2 text-xs text-red-400">Download failed: {javaError}</p>
-                )}
+                {javaError && <p className="mt-2 text-xs text-red-400">Download failed: {javaError}</p>}
               </div>
               <div className="mt-4">
                 <Input
                   label="Custom Java path (optional)"
                   placeholder="C:\Program Files\Eclipse Adoptium\jdk-21\bin\java.exe"
                   value={settings.java.custom_java_path ?? ''}
-                  onChange={(e) => void updateSettings({ java: { ...settings.java, custom_java_path: e.target.value || undefined } })}
+                  onChange={(e) => void setJava({ custom_java_path: e.target.value || undefined })}
                 />
               </div>
               <div className="mt-4">
@@ -259,7 +262,7 @@ export function SettingsPage() {
                   label="Extra JVM args"
                   value={settings.java.jvm_args}
                   rows={3}
-                  onChange={(e) => void updateSettings({ java: { ...settings.java, jvm_args: e.target.value } })}
+                  onChange={(e) => void setJava({ jvm_args: e.target.value })}
                 />
               </div>
             </Card>
@@ -274,12 +277,12 @@ export function SettingsPage() {
                 label="Custom game dir (optional)"
                 placeholder="Leave empty for per-profile instances"
                 value={settings.game.default_game_dir ?? ''}
-                onChange={(e) => void updateSettings({ game: { ...settings.game, default_game_dir: e.target.value || undefined } })}
+                onChange={(e) => void setGame({ default_game_dir: e.target.value || undefined })}
               />
               <Select
                 label="Close launcher behaviour"
                 value={settings.game.keep_launcher_open ? 'keep' : 'close'}
-                onChange={(e) => void updateSettings({ game: { ...settings.game, keep_launcher_open: e.target.value === 'keep', auto_close_launcher: e.target.value === 'close' } })}
+                onChange={(e) => void setGame({ keep_launcher_open: e.target.value === 'keep', auto_close_launcher: e.target.value === 'close' })}
                 options={[
                   { value: 'keep', label: 'Keep launcher open' },
                   { value: 'close', label: 'Close on launch' },
@@ -287,10 +290,10 @@ export function SettingsPage() {
               />
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-3">
-              <Input label="Width" type="number" value={settings.game.custom_resolution?.width ?? ''} placeholder="854" onChange={(e) => void updateSettings({ game: { ...settings.game, custom_resolution: e.target.value ? { width: parseInt(e.target.value) || 854, height: settings.game.custom_resolution?.height ?? 480, fullscreen: settings.game.fullscreen } : undefined } })} />
-              <Input label="Height" type="number" value={settings.game.custom_resolution?.height ?? ''} placeholder="480" onChange={(e) => void updateSettings({ game: { ...settings.game, custom_resolution: e.target.value ? { width: settings.game.custom_resolution?.width ?? 854, height: parseInt(e.target.value) || 480, fullscreen: settings.game.fullscreen } : undefined } })} />
+              <Input label="Width" type="number" value={settings.game.custom_resolution?.width ?? ''} placeholder="854" onChange={(e) => void setGame({ custom_resolution: e.target.value ? { width: parseInt(e.target.value) || 854, height: settings.game.custom_resolution?.height ?? 480, fullscreen: settings.game.fullscreen } : undefined })} />
+              <Input label="Height" type="number" value={settings.game.custom_resolution?.height ?? ''} placeholder="480" onChange={(e) => void setGame({ custom_resolution: e.target.value ? { width: settings.game.custom_resolution?.width ?? 854, height: parseInt(e.target.value) || 480, fullscreen: settings.game.fullscreen } : undefined })} />
               <div className="flex items-end pb-2">
-                <Checkbox label="Fullscreen" checked={settings.game.fullscreen} onChange={(e) => void updateSettings({ game: { ...settings.game, fullscreen: e.target.checked } })} />
+                <Checkbox label="Fullscreen" checked={settings.game.fullscreen} onChange={(e) => void setGame({ fullscreen: e.target.checked })} />
               </div>
             </div>
           </Card>
@@ -300,9 +303,9 @@ export function SettingsPage() {
           <Card padding="md">
             <SectionTitle icon={Network} title="Downloads" />
             <div className="grid gap-4 sm:grid-cols-2">
-              <Input label="Download threads" type="number" value={settings.network.download_threads} onChange={(e) => void updateSettings({ network: { ...settings.network, download_threads: parseInt(e.target.value) || 4 } })} />
+              <Input label="Download threads" type="number" value={settings.network.download_threads} onChange={(e) => void updateSettings({ network: { download_threads: parseInt(e.target.value) || 4 } })} />
               <div className="flex items-end pb-2">
-                <Checkbox label="Verify downloads (SHA1)" checked={settings.advanced.verify_downloads} onChange={(e) => void updateSettings({ advanced: { ...settings.advanced, verify_downloads: e.target.checked } })} />
+                <Checkbox label="Verify downloads (SHA1)" checked={settings.advanced.verify_downloads} onChange={(e) => void setAdvanced({ verify_downloads: e.target.checked })} />
               </div>
             </div>
           </Card>
@@ -315,21 +318,21 @@ export function SettingsPage() {
               <Textarea
                 label="Custom game args (space separated)"
                 value={settings.advanced.custom_game_args.join(' ')}
-                onChange={(e) => void updateSettings({ advanced: { ...settings.advanced, custom_game_args: e.target.value.split(' ').filter(Boolean) } })}
+                onChange={(e) => void setAdvanced({ custom_game_args: e.target.value.split(' ').filter(Boolean) })}
               />
               <Input
                 label="Pre-launch command"
                 value={settings.advanced.pre_launch_command ?? ''}
-                onChange={(e) => void updateSettings({ advanced: { ...settings.advanced, pre_launch_command: e.target.value || undefined } })}
+                onChange={(e) => void setAdvanced({ pre_launch_command: e.target.value || undefined })}
               />
               <Input
                 label="Post-exit command"
                 value={settings.advanced.post_exit_command ?? ''}
-                onChange={(e) => void updateSettings({ advanced: { ...settings.advanced, post_exit_command: e.target.value || undefined } })}
+                onChange={(e) => void setAdvanced({ post_exit_command: e.target.value || undefined })}
               />
               <div className="flex flex-wrap gap-x-8 gap-y-2 border-t border-white/[0.07] pt-4">
-                <Checkbox label="Debug logging" checked={settings.advanced.debug_logging} onChange={(e) => void updateSettings({ advanced: { ...settings.advanced, debug_logging: e.target.checked } })} />
-                <Checkbox label="Show console" checked={settings.advanced.console_enabled} onChange={(e) => void updateSettings({ advanced: { ...settings.advanced, console_enabled: e.target.checked } })} />
+                <Checkbox label="Debug logging" checked={settings.advanced.debug_logging} onChange={(e) => void setAdvanced({ debug_logging: e.target.checked })} />
+                <Checkbox label="Show console" checked={settings.advanced.console_enabled} onChange={(e) => void setAdvanced({ console_enabled: e.target.checked })} />
               </div>
             </div>
           </Card>

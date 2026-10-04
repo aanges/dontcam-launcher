@@ -1,3 +1,6 @@
+//! Microsoft OAuth: embedded sign-in window, official desktop redirect,
+//! then the standard Xbox Live -> XSTS -> Minecraft token chain.
+
 use super::*;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -7,16 +10,13 @@ use chrono::Utc;
 use uuid::Uuid;
 use tauri::{Emitter, Manager};
 
-// Public client ID historically used by Minecraft launchers (no secret needed).
-// NOTE: this app only allows the official desktop redirect below —
-// arbitrary localhost callbacks are rejected by Microsoft (AADSTS invalid_request).
+// Public client id historically used by Minecraft launchers (no secret needed).
 const CLIENT_ID: &str = "00000000402b5328";
 const AUTH_URL: &str = "https://login.live.com/oauth20_authorize.srf";
 const TOKEN_URL: &str = "https://login.live.com/oauth20_token.srf";
 const DESKTOP_REDIRECT: &str = "https://login.live.com/oauth20_desktop.srf";
 const SCOPE: &str = "XboxLive.signin offline_access";
 
-// Public client ID historically used by Minecraft launchers (no secret needed).
 const XBL_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_AUTH_URL: &str =
@@ -51,15 +51,16 @@ impl MicrosoftAuth {
         );
 
         // Fallback visibility: frontend can show this URL if the window fails.
-        let _ = app.emit(
-            "ms-login-url",
-            serde_json::json!({ "url": auth_url }),
-        );
+        let _ = app.emit("ms-login-url", serde_json::json!({ "url": auth_url }));
 
         let window = WebviewWindowBuilder::new(
             &app,
             "microsoft-auth",
-            WebviewUrl::External(auth_url.parse().map_err(|e| anyhow::anyhow!("Bad auth URL: {}", e))?),
+            WebviewUrl::External(
+                auth_url
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("Bad auth URL: {}", e))?,
+            ),
         )
         .title("Sign in with Microsoft")
         .inner_size(520.0, 700.0)
@@ -131,9 +132,7 @@ impl MicrosoftAuth {
             .first()
             .map(|x| x.uhs.clone())
             .ok_or_else(|| anyhow::anyhow!("Missing Xbox user hash"))?;
-        let mc_token = self
-            .authenticate_minecraft(&uhs, &xsts_token.token)
-            .await?;
+        let mc_token = self.authenticate_minecraft(&uhs, &xsts_token.token).await?;
         // Verify game ownership
         self.check_ownership(&mc_token.access_token).await?;
         let profile = self.get_minecraft_profile(&mc_token.access_token).await?;
@@ -147,8 +146,6 @@ impl MicrosoftAuth {
             refresh_token: Some(ms_token.refresh_token),
             token_expires_at: Some(now + chrono::Duration::seconds(mc_token.expires_in as i64)),
             account_type: AccountType::Microsoft,
-            skin_url: profile.skins.first().map(|s| s.url.clone()),
-            cape_url: profile.capes.first().map(|c| c.url.clone()),
             created_at: now,
             last_used: now,
         })
@@ -222,12 +219,7 @@ impl MicrosoftAuth {
         let request = serde_json::json!({
             "identityToken": format!("XBL3.0 x={};{}", uhs, xsts_token)
         });
-        let response = self
-            .client
-            .post(MINECRAFT_AUTH_URL)
-            .json(&request)
-            .send()
-            .await?;
+        let response = self.client.post(MINECRAFT_AUTH_URL).json(&request).send().await?;
         if !response.status().is_success() {
             let error = response.text().await?;
             return Err(anyhow::anyhow!("Minecraft auth failed: {}", error));

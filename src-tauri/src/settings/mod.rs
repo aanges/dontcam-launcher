@@ -1,9 +1,11 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+//! Launcher settings, persisted as JSON in the base data dir.
+//! The shape mirrors `src/types/index.ts` exactly.
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
 use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
 
 pub struct SettingsManager {
     settings: Arc<RwLock<Settings>>,
@@ -49,7 +51,6 @@ impl SettingsManager {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    pub theme: Theme,
     pub language: String,
     pub java: JavaSettings,
     pub game: GameSettings,
@@ -61,7 +62,6 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: Theme::System,
             language: "en-US".to_string(),
             java: JavaSettings::default(),
             game: GameSettings::default(),
@@ -72,18 +72,9 @@ impl Default for Settings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Theme {
-    Light,
-    Dark,
-    System,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JavaSettings {
     pub auto_detect: bool,
-    pub preferred_version: Option<String>,
     pub custom_java_path: Option<String>,
     pub jvm_args: String,
     pub memory_allocation: MemoryAllocation,
@@ -93,9 +84,8 @@ impl Default for JavaSettings {
     fn default() -> Self {
         Self {
             auto_detect: true,
-            preferred_version: Some("21".to_string()),
             custom_java_path: None,
-            jvm_args: "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1 -Dusing.aikars.flags=https://mcflags.emc.gs -Daikars.new.flags=true".to_string(),
+            jvm_args: String::new(),
             memory_allocation: MemoryAllocation::default(),
         }
     }
@@ -131,12 +121,6 @@ pub struct GameSettings {
     pub keep_launcher_open: bool,
     pub custom_resolution: Option<Resolution>,
     pub fullscreen: bool,
-    pub vsync: bool,
-    pub fov: f32,
-    pub render_distance: u8,
-    pub max_fps: u32,
-    pub enable_mods: bool,
-    pub enable_resource_packs: bool,
 }
 
 impl Default for GameSettings {
@@ -147,12 +131,6 @@ impl Default for GameSettings {
             keep_launcher_open: true,
             custom_resolution: None,
             fullscreen: false,
-            vsync: true,
-            fov: 70.0,
-            render_distance: 12,
-            max_fps: 0,
-            enable_mods: true,
-            enable_resource_packs: true,
         }
     }
 }
@@ -167,26 +145,12 @@ pub struct Resolution {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkSettings {
-    pub proxy_enabled: bool,
-    pub proxy_host: String,
-    pub proxy_port: u16,
-    pub proxy_username: Option<String>,
-    pub proxy_password: Option<String>,
     pub download_threads: u8,
-    pub bandwidth_limit: Option<u64>,
 }
 
 impl Default for NetworkSettings {
     fn default() -> Self {
-        Self {
-            proxy_enabled: false,
-            proxy_host: "".to_string(),
-            proxy_port: 8080,
-            proxy_username: None,
-            proxy_password: None,
-            download_threads: 4,
-            bandwidth_limit: None,
-        }
+        Self { download_threads: 4 }
     }
 }
 
@@ -198,8 +162,6 @@ pub struct UISettings {
     pub sort_versions_by: VersionSort,
     pub compact_mode: bool,
     pub animations: bool,
-    pub background_blur: bool,
-    pub news_enabled: bool,
 }
 
 impl Default for UISettings {
@@ -211,8 +173,6 @@ impl Default for UISettings {
             sort_versions_by: VersionSort::NewestFirst,
             compact_mode: false,
             animations: true,
-            background_blur: true,
-            news_enabled: true,
         }
     }
 }
@@ -231,24 +191,20 @@ pub struct AdvancedSettings {
     pub debug_logging: bool,
     pub console_enabled: bool,
     pub custom_game_args: Vec<String>,
-    pub environment_variables: HashMap<String, String>,
     pub pre_launch_command: Option<String>,
     pub post_exit_command: Option<String>,
     pub verify_downloads: bool,
-    pub parallel_downloads: u8,
 }
 
 impl Default for AdvancedSettings {
     fn default() -> Self {
         Self {
             debug_logging: false,
-            console_enabled: false,
+            console_enabled: true,
             custom_game_args: vec![],
-            environment_variables: HashMap::new(),
             pre_launch_command: None,
             post_exit_command: None,
             verify_downloads: true,
-            parallel_downloads: 4,
         }
     }
 }
@@ -257,8 +213,7 @@ impl Default for AdvancedSettings {
 pub async fn get_settings(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Settings, String> {
-    let settings = state.settings.settings.read().await;
-    Ok(settings.clone())
+    Ok(state.settings.get().await)
 }
 
 #[tauri::command]
@@ -266,10 +221,10 @@ pub async fn update_settings(
     state: tauri::State<'_, crate::AppState>,
     settings: Settings,
 ) -> Result<Settings, String> {
-    let mut current = state.settings.settings.write().await;
-    *current = settings.clone();
-    drop(current);
-    
+    {
+        let mut current = state.settings.settings.write().await;
+        *current = settings.clone();
+    }
     state.settings.save().await.map_err(|e| e.to_string())?;
     Ok(settings)
 }
@@ -279,10 +234,10 @@ pub async fn reset_settings(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Settings, String> {
     let default = Settings::default();
-    let mut current = state.settings.settings.write().await;
-    *current = default.clone();
-    drop(current);
-    
+    {
+        let mut current = state.settings.settings.write().await;
+        *current = default.clone();
+    }
     state.settings.save().await.map_err(|e| e.to_string())?;
     Ok(default)
 }

@@ -1,85 +1,29 @@
-use tauri::{AppHandle, Manager};
+//! Frameless-window controls (the app uses `decorations: false`).
 
-#[tauri::command]
-pub async fn minimize_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.minimize().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+use tauri::Manager;
+
+fn main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())
 }
 
 #[tauri::command]
-pub async fn maximize_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.maximize().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+pub async fn minimize_window(app: tauri::AppHandle) -> Result<(), String> {
+    main_window(&app)?.minimize().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn unmaximize_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.unmaximize().map_err(|e| e.to_string())?;
+pub async fn toggle_maximize(app: tauri::AppHandle) -> Result<(), String> {
+    let window = main_window(&app)?;
+    let maximized = window.is_maximized().map_err(|e| e.to_string())?;
+    if maximized {
+        window.unmaximize().map_err(|e| e.to_string())
+    } else {
+        window.maximize().map_err(|e| e.to_string())
     }
-    Ok(())
 }
 
 #[tauri::command]
-pub async fn toggle_maximize(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        if window.is_maximized().map_err(|e| e.to_string())? {
-            window.unmaximize().map_err(|e| e.to_string())?;
-        } else {
-            window.maximize().map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn close_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.close().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn set_window_title(app: AppHandle, title: String) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.set_title(&title).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn set_window_size(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height })).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn center_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.center().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn show_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.show().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn hide_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.hide().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+pub async fn close_window(app: tauri::AppHandle) -> Result<(), String> {
+    main_window(&app)?.close().map_err(|e| e.to_string())
 }

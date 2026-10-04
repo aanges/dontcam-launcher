@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '../../utils/helpers'
@@ -16,33 +16,27 @@ interface ModalProps {
   closeOnEscape?: boolean
 }
 
-export function Modal({ 
-  isOpen, 
-  onClose, 
-  title, 
-  description, 
-  children, 
+export function Modal({
+  isOpen,
+  onClose,
+  title,
+  description,
+  children,
   size = 'md',
   showCloseButton = true,
   closeOnOverlayClick = true,
   closeOnEscape = true,
 }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!isOpen) return
 
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && closeOnEscape) {
-        onClose()
-      }
+      if (e.key === 'Escape' && closeOnEscape) onClose()
     }
-
     const handleOverlayClick = (e: MouseEvent) => {
-      if (closeOnOverlayClick && e.target === overlayRef.current) {
-        onClose()
-      }
+      if (closeOnOverlayClick && e.target === overlayRef.current) onClose()
     }
 
     document.addEventListener('keydown', handleEscape)
@@ -54,6 +48,7 @@ export function Modal({
       overlayRef.current?.removeEventListener('click', handleOverlayClick)
       document.body.style.overflow = 'unset'
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, onClose, closeOnEscape, closeOnOverlayClick])
 
   if (!isOpen) return null
@@ -75,14 +70,7 @@ export function Modal({
       aria-labelledby={title ? 'modal-title' : undefined}
       aria-describedby={description ? 'modal-description' : undefined}
     >
-      <div
-        ref={contentRef}
-        className={cn(
-          'w-full rounded-[24px] border border-white/10 bg-[#0C0F16] shadow-[0_40px_120px_-20px_rgba(0,0,0,0.9)] animate-slide-up',
-          'overflow-hidden',
-          sizes[size]
-        )}
-      >
+      <div className={cn('w-full rounded-[24px] border border-white/10 bg-[#0C0F16] shadow-[0_40px_120px_-20px_rgba(0,0,0,0.9)] animate-slide-up overflow-hidden', sizes[size])}>
         {(title || showCloseButton) && (
           <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] p-6 pb-5">
             <div>
@@ -149,11 +137,7 @@ export function ConfirmDialog({
         <Button variant="secondary" onClick={onClose} disabled={loading}>
           {cancelText}
         </Button>
-        <Button
-          variant={variant === 'danger' ? 'destructive' : 'primary'}
-          onClick={onConfirm}
-          loading={loading}
-        >
+        <Button variant={variant === 'danger' ? 'destructive' : 'primary'} onClick={onConfirm} loading={loading}>
           {confirmText}
         </Button>
       </div>
@@ -169,13 +153,7 @@ interface AlertDialogProps {
   confirmText?: string
 }
 
-export function AlertDialog({
-  isOpen,
-  onClose,
-  title,
-  message,
-  confirmText = 'OK',
-}: AlertDialogProps) {
+export function AlertDialog({ isOpen, onClose, title, message, confirmText = 'OK' }: AlertDialogProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm">
       <p className="mb-6 text-sm leading-relaxed text-slate-300">{message}</p>

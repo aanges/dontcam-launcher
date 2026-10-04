@@ -1,3 +1,7 @@
+//! Mod loaders (Forge / Fabric / Quilt / NeoForge): version listing,
+//! headless installation, Fabric API provisioning, and the one-click
+//! `install_modded` chain (vanilla + best loader for the MC line).
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,7 +43,6 @@ impl ModLoaderManager {
     }
 
     /// NeoForge version prefix for an MC version: "1.21.1" -> "21.1".
-    /// Takes the first two numeric components after stripping a leading "1.".
     fn neoforge_prefix(mc_version: &str) -> String {
         let base = mc_version.split('-').next().unwrap_or(mc_version);
         let stripped = base.strip_prefix("1.").unwrap_or(base);
@@ -165,7 +168,6 @@ impl ModLoaderManager {
     }
 
     async fn get_fabric_versions(&self, mc_version: &str) -> Result<Vec<ModLoaderVersion>> {
-        // Per-game loader list (only loaders compatible with this MC version).
         let url = format!("https://meta.fabricmc.net/v2/versions/loader/{}", mc_version);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
@@ -206,11 +208,6 @@ impl ModLoaderManager {
     }
 
     /// Newest Fabric Loader line known-good for an MC line (endpoint is unfiltered).
-    /// Floors come from the mods themselves: every bundled DontCam Fabric mod
-    /// declares `fabricloader >= 0.15.11` (1.21 needs >= 0.19.5), and each
-    /// line's current Fabric API declares its own minimum (1.20's 0.92.x
-    /// needs >= 0.16.10 — capping 1.20 at 0.15.x installs a loader the API
-    /// rejects with an "Incompatible mods" screen).
     fn max_fabric_loader(mc_version: &str) -> Option<&'static str> {
         let base = mc_version.split('-').next().unwrap_or(mc_version);
         if base.starts_with("1.16.") || base == "1.16" {
@@ -307,7 +304,6 @@ impl ModLoaderManager {
         if let Some(libs) = profile.get("libraries").and_then(|l| l.as_array()) {
             for lib in libs {
                 let name = lib["name"].as_str().unwrap_or("");
-                // downloads.artifact
                 if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
                     let (url, path) = (
                         artifact["url"].as_str().unwrap_or(""),
@@ -316,7 +312,6 @@ impl ModLoaderManager {
                     if url.is_empty() || path.is_empty() {
                         continue;
                     }
-                    // respect rules
                     if let Some(rules) = lib.get("rules") {
                         if !rules_allowed(rules) {
                             continue;
@@ -355,7 +350,6 @@ impl ModLoaderManager {
             }
         }
 
-        // copy vanilla jar reference: fabric profile usually has inheritsFrom — nothing to copy.
         let _ = game_dir;
 
         let installed = InstalledModLoader {
@@ -365,14 +359,9 @@ impl ModLoaderManager {
             mod_loader: version.mod_loader.clone(),
             installed_at: chrono::Utc::now(),
         };
-        let mut map = self.installed.write().await;
-        map.insert(version_id.clone(), installed.clone());
-        drop(map);
-        // Remove superseded profiles of the same loader line
-        // (e.g. fabric-loader-0.15.11-1.20.1 after 0.16.14 lands), so the
-        // Installed list doesn't accumulate stale, possibly incompatible
-        // loader entries. Anchored to `fabric-loader-*-<mc>` / quilt
-        // equivalent — never touches vanilla or other loaders.
+        self.installed.write().await.insert(version_id.clone(), installed.clone());
+        // Remove superseded profiles of the same loader line so the Installed
+        // list doesn't accumulate stale, possibly incompatible entries.
         prune_superseded_profiles(&version_id, &version.mc_version).await;
         Ok(installed)
     }
@@ -390,8 +379,7 @@ impl ModLoaderManager {
             _ => "Forge",
         };
         // Download installer
-        let installer_path =
-            std::env::temp_dir().join(format!("{}-installer.jar", version.id));
+        let installer_path = std::env::temp_dir().join(format!("{}-installer.jar", version.id));
         let bytes = self
             .client
             .get(&version.download_url)
@@ -411,10 +399,7 @@ impl ModLoaderManager {
         // Old installers (<=1.12 era) use --installClient, modern ones --install-client.
         let legacy = mc_is_legacy(&version.mc_version);
         let mc_base = crate::common::base_dir();
-        // Legacy installers refuse to run without a vanilla launcher profile
-        // ("There is no minecraft launcher profile ... you need to run the
-        // launcher first!"). Our base dir is not the vanilla launcher dir,
-        // so plant a minimal profile file when it's missing.
+        // Legacy installers refuse to run without a vanilla launcher profile.
         if legacy {
             ensure_launcher_profile(&mc_base).await;
         }
@@ -437,7 +422,6 @@ impl ModLoaderManager {
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr).to_string();
             let out = String::from_utf8_lossy(&output.stdout).to_string();
-            // trim giant logs, keep the tail where the actual error usually is
             let combined = format!("{} {}", out, err);
             let tail: String = combined.chars().rev().take(2000).collect::<String>().chars().rev().collect();
             anyhow::bail!("{} installer failed: {}", loader_name, tail.trim());
@@ -455,8 +439,7 @@ impl ModLoaderManager {
             mod_loader: version.mod_loader.clone(),
             installed_at: chrono::Utc::now(),
         };
-        let mut map = self.installed.write().await;
-        map.insert(installed_id, installed.clone());
+        self.installed.write().await.insert(installed_id, installed.clone());
         Ok(installed)
     }
 
@@ -468,11 +451,9 @@ impl ModLoaderManager {
     }
 
     /// Ensure Fabric API for this MC version is present in the instance mods dir.
-    /// Our bundled Fabric mod hard-depends on it. Jars built for a different
-    /// MC line are removed (they crash the game), then the right one downloads.
-    /// Corrupt files (not a ZIP, e.g. a saved error page or partial download)
-    /// are also removed and re-downloaded — the loader silently ignores them
-    /// and then reports the API as missing. Returns true when it downloaded now.
+    /// Jars built for a different MC line are removed (they crash the game),
+    /// then the right one downloads. Corrupt files (not a ZIP) are also
+    /// removed and re-downloaded. Returns true when it downloaded now.
     pub async fn ensure_fabric_api(
         &self,
         mods_dir: &PathBuf,
@@ -481,9 +462,7 @@ impl ModLoaderManager {
         tokio::fs::create_dir_all(mods_dir).await.ok();
         let tag = format!("+{}.jar", mc_version);
         let alt_tag = format!("-{}.jar", mc_version);
-        // Some API builds are named per minor line (e.g. `+1.16.jar` instead
-        // of `+1.16.5.jar`) — accept those too so we don't re-download API
-        // on every launch.
+        // Some API builds are named per minor line (e.g. `+1.16.jar`).
         let base = mc_version.split('-').next().unwrap_or(mc_version);
         let mut parts = base.split('.');
         let minor_tag = match (parts.next(), parts.next()) {
@@ -501,9 +480,6 @@ impl ModLoaderManager {
                     if for_this_line && file_is_zip(entry.path()).await {
                         matching = true;
                     } else {
-                        // API built for another MC line — would crash on load —
-                        // or a corrupt file the loader ignores and then reports
-                        // as a missing dependency.
                         let _ = tokio::fs::remove_file(entry.path()).await;
                     }
                 }
@@ -578,8 +554,7 @@ fn bytes_start_with_zip(bytes: &[u8]) -> bool {
 
 /// Remove stale same-loader profiles for an MC line after an upgrade.
 /// Only `fabric-loader-*-<mc>` / `quilt-loader-*-<mc>` dirs are eligible and
-/// only when they are NOT the just-installed id. Vanilla and other loaders
-/// are never touched.
+/// only when they are NOT the just-installed id.
 async fn prune_superseded_profiles(keep_id: &str, mc_version: &str) {
     let (prefix, suffix) = if keep_id.starts_with("fabric-loader-") {
         ("fabric-loader-", format!("-{}", mc_version))
@@ -606,8 +581,7 @@ async fn prune_superseded_profiles(keep_id: &str, mc_version: &str) {
 }
 
 /// Minimal vanilla `launcher_profiles.json`, just enough for legacy
-/// (<=1.12 era) Forge installers which abort without one. Only created
-/// when the file is missing; never overwritten.
+/// (<=1.12 era) Forge installers which abort without one.
 async fn ensure_launcher_profile(mc_base: &PathBuf) {
     let path = mc_base.join("launcher_profiles.json");
     if path.exists() {
@@ -708,7 +682,7 @@ fn sort_versions_desc(versions: &mut [String]) {
     versions.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
 }
 
-fn rules_allowed(rules: &serde_json::Value) -> bool {    // simplified: evaluate os.name only
+fn rules_allowed(rules: &serde_json::Value) -> bool {
     if let Some(arr) = rules.as_array() {
         let mut allowed = true;
         for rule in arr {
@@ -875,57 +849,8 @@ pub async fn get_installed_modloaders(
         .map_err(|e| e.to_string())
 }
 
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn loader_resolution_per_line() {
-        // 1.8–1.12 -> Forge, 1.16–1.21 -> Fabric (with Fabric API).
-        assert_eq!(default_loader_for("1.8.9"), ModLoaderType::Forge);
-        assert_eq!(default_loader_for("1.12.2"), ModLoaderType::Forge);
-        assert_eq!(default_loader_for("1.16.5"), ModLoaderType::Fabric);
-        assert_eq!(default_loader_for("1.17.1"), ModLoaderType::Fabric);
-        assert_eq!(default_loader_for("1.18.2"), ModLoaderType::Fabric);
-        assert_eq!(default_loader_for("1.19.4"), ModLoaderType::Fabric);
-        assert_eq!(default_loader_for("1.20.1"), ModLoaderType::Fabric);
-        assert_eq!(default_loader_for("1.21.1"), ModLoaderType::Fabric);
-    }
-
-    #[test]
-    fn neoforge_prefixes() {
-        assert_eq!(ModLoaderManager::neoforge_prefix("1.21.1"), "21.1");
-        assert_eq!(ModLoaderManager::neoforge_prefix("1.20.1"), "20.1");
-    }
-
-    #[test]
-    fn legacy_flag_eras() {
-        assert!(mc_is_legacy("1.8.9"));
-        assert!(mc_is_legacy("1.12.2"));
-        assert!(!mc_is_legacy("1.13"));
-        assert!(!mc_is_legacy("1.16.5"));
-        assert!(!mc_is_legacy("1.21.1"));
-    }
-
-    #[test]
-    fn fabric_loader_caps() {
-        // floors: bundled mods need loader >= 0.15.11 (1.21: >= 0.19.5),
-        // 1.20's API needs >= 0.16.10
-        assert_eq!(ModLoaderManager::max_fabric_loader("1.16.5"), Some("0.15.11"));
-        assert_eq!(ModLoaderManager::max_fabric_loader("1.19.4"), Some("0.15.11"));
-        assert_eq!(ModLoaderManager::max_fabric_loader("1.20.1"), Some("0.16.14"));
-        assert_eq!(ModLoaderManager::max_fabric_loader("1.21.1"), None);
-        // capped-out loaders sort above the cap
-        assert!(version_key("0.19.5") > version_key("0.14.25"));
-        assert!(version_key("0.15.11") > version_key("0.14.25"));
-        assert!(version_key("0.16.14") > version_key("0.15.11"));
-    }
-}
-
 pub(crate) fn default_loader_for(mc_version: &str) -> ModLoaderType {
     // 1.8–1.12 -> Forge, 1.16–1.21 -> Fabric (+ Fabric API at install/launch).
-    // (NeoForge remains available as a manual choice in Mods/Profiles.)
     let base = mc_version.split('-').next().unwrap_or(mc_version);
     let mut parts = base.split('.').filter_map(|p| p.parse::<u64>().ok());
     match (parts.next(), parts.next()) {
@@ -965,9 +890,6 @@ pub struct InstallModdedResult {
 /// Full chain for one click: vanilla files + best loader for this MC version.
 /// Never vanilla-only: 1.8–1.12 -> Forge, 1.16–1.21 -> Fabric (+ Fabric API).
 /// Loader failures are reported (not fatal) so vanilla stays playable.
-/// The bundled DontCam mod for the MC line is ALWAYS staged into the
-/// instance right away (1.20.1 -> jar from the 1.20 line, 1.8.9 -> 1.8, etc.),
-/// so the mods folder is correct even before the first launch.
 #[tauri::command]
 pub async fn install_modded(
     app: tauri::AppHandle,
@@ -994,17 +916,10 @@ pub async fn install_modded(
     }
 
     // Provision the right Java BEFORE running a loader installer: legacy
-    // Forge installers break on too-new runtimes, and find_java_for_mc picks
-    // the managed runtime matching this MC version when it exists.
+    // Forge installers break on too-new runtimes.
     let required_java = crate::common::recommended_java_major(&version_id);
-    if let Err(e) = (|| async {
-        state.java.ensure_java(required_java).await
-            .ok_or_else(|| anyhow::anyhow!("no Java available"))?;
-        Ok::<(), anyhow::Error>(())
-    })()
-    .await
-    {
-        tracing::warn!("Java provisioning for {} failed: {}", version_id, e);
+    if state.java.ensure_java(required_java).await.is_none() {
+        tracing::warn!("Java provisioning for {} failed", version_id);
     }
 
     let result = (|| async {
@@ -1031,12 +946,9 @@ pub async fn install_modded(
         Err(e) => (None, Some(e.to_string())),
     };
 
-    // Stage bundled mod (+ API) into the instance immediately — ALWAYS,
-    // not gated on any profile flag: every installed version gets its
-    // line-specific DontCam jar (Fabric lines also get Fabric API).
+    // Stage bundled mod (+ API) into the instance immediately — ALWAYS:
+    // every installed version gets its line-specific DontCam jar.
     if crate::launch::bundled_mod_for(&version_id).is_some() {
-        // Resolve target game dir: profile instance when known, else the
-        // profile's dir / global instance so `mods/` is still correct.
         let game_dir = if let Some(pid) = profile_id.as_deref() {
             if pid.is_empty() {
                 crate::common::game_dir_for_profile(&state.settings, None).await
@@ -1066,4 +978,48 @@ pub async fn install_modded(
         modded_version_id,
         loader_error,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loader_resolution_per_line() {
+        // 1.8–1.12 -> Forge, 1.16–1.21 -> Fabric (with Fabric API).
+        assert_eq!(default_loader_for("1.8.9"), ModLoaderType::Forge);
+        assert_eq!(default_loader_for("1.12.2"), ModLoaderType::Forge);
+        assert_eq!(default_loader_for("1.16.5"), ModLoaderType::Fabric);
+        assert_eq!(default_loader_for("1.17.1"), ModLoaderType::Fabric);
+        assert_eq!(default_loader_for("1.18.2"), ModLoaderType::Fabric);
+        assert_eq!(default_loader_for("1.19.4"), ModLoaderType::Fabric);
+        assert_eq!(default_loader_for("1.20.1"), ModLoaderType::Fabric);
+        assert_eq!(default_loader_for("1.21.1"), ModLoaderType::Fabric);
+    }
+
+    #[test]
+    fn neoforge_prefixes() {
+        assert_eq!(ModLoaderManager::neoforge_prefix("1.21.1"), "21.1");
+        assert_eq!(ModLoaderManager::neoforge_prefix("1.20.1"), "20.1");
+    }
+
+    #[test]
+    fn legacy_flag_eras() {
+        assert!(mc_is_legacy("1.8.9"));
+        assert!(mc_is_legacy("1.12.2"));
+        assert!(!mc_is_legacy("1.13"));
+        assert!(!mc_is_legacy("1.16.5"));
+        assert!(!mc_is_legacy("1.21.1"));
+    }
+
+    #[test]
+    fn fabric_loader_caps() {
+        assert_eq!(ModLoaderManager::max_fabric_loader("1.16.5"), Some("0.15.11"));
+        assert_eq!(ModLoaderManager::max_fabric_loader("1.19.4"), Some("0.15.11"));
+        assert_eq!(ModLoaderManager::max_fabric_loader("1.20.1"), Some("0.16.14"));
+        assert_eq!(ModLoaderManager::max_fabric_loader("1.21.1"), None);
+        assert!(version_key("0.19.5") > version_key("0.14.25"));
+        assert!(version_key("0.15.11") > version_key("0.14.25"));
+        assert!(version_key("0.16.14") > version_key("0.15.11"));
+    }
 }

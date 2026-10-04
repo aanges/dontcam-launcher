@@ -1,25 +1,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod auth;
-mod dontcam;
-mod versions;
-mod profiles;
-mod launch;
-mod settings;
-mod modloaders;
-mod java;
-mod window;
 mod common;
+mod dontcam;
+mod java;
+mod launch;
+mod modloaders;
+mod profiles;
+mod settings;
+mod versions;
+mod window;
 
 use std::sync::Arc;
 
 use auth::AuthManager;
-use versions::VersionManager;
-use profiles::ProfileManager;
-use launch::LaunchManager;
-use settings::SettingsManager;
-use modloaders::ModLoaderManager;
 use java::JavaManager;
+use launch::LaunchManager;
+use modloaders::ModLoaderManager;
+use profiles::ProfileManager;
+use settings::SettingsManager;
+use versions::VersionManager;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -90,16 +90,12 @@ fn main() {
             modloaders::get_installed_modloaders,
             modloaders::resolve_loader,
             modloaders::install_modded,
-            dontcam::get_dontcam_releases,
-            dontcam::install_dontcam_mod,
-            dontcam::check_dontcam_update,
             java::detect_java,
             java::get_java_installations,
             java::download_java,
             java::resolve_java_for_version,
+            dontcam::check_dontcam_update,
             window::minimize_window,
-            window::maximize_window,
-            window::unmaximize_window,
             window::toggle_maximize,
             window::close_window,
             utils::open_folder,
@@ -175,12 +171,9 @@ mod utils {
         state: tauri::State<'_, crate::AppState>,
         profile_id: Option<String>,
     ) -> Result<String, String> {
-        Ok(crate::common::game_dir_for_profile(
-            &state.settings,
-            profile_id.as_deref(),
-        )
-        .await
-        .to_string_lossy()
-        .to_string())
+        Ok(crate::common::game_dir_for_profile(&state.settings, profile_id.as_deref())
+            .await
+            .to_string_lossy()
+            .to_string())
     }
 }

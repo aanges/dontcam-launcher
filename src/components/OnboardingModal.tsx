@@ -1,100 +1,84 @@
 import { useState } from 'react'
-import { ShieldCheck } from 'lucide-react'
+import { UserPlus, MonitorSmartphone } from 'lucide-react'
 import { Modal } from './ui/Modal'
 import { Button } from './ui/Button'
 import { Input } from './ui/Input'
-import { LogoTile } from './Logo'
 import { useAuthStore } from '../store/authStore'
+import { LogoTile } from './Logo'
 
-/** First-run popup: no account exists yet. Microsoft first (green), offline as plain text below. */
-export function OnboardingModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { isLoading, error, loginMicrosoft, loginOffline } = useAuthStore()
-  const [showOffline, setShowOffline] = useState(false)
+interface OnboardingModalProps {
+  open: boolean
+  onClose: () => void
+}
+
+export function OnboardingModal({ open, onClose }: OnboardingModalProps) {
+  const { loginOffline, loginMicrosoft } = useAuthStore()
   const [username, setUsername] = useState('')
+  const [busy, setBusy] = useState<'offline' | 'microsoft' | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleMicrosoft = async () => {
+  const doOffline = async () => {
+    if (!username.trim()) return
+    setBusy('offline')
+    setError(null)
     try {
-      await loginMicrosoft()
-    } catch {
-      // error is in the store and shown below
+      await loginOffline(username.trim())
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
     }
   }
 
-  const handleOffline = async () => {
-    if (!username.trim()) return
+  const doMicrosoft = async () => {
+    setBusy('microsoft')
+    setError(null)
     try {
-      await loginOffline(username.trim())
-    } catch {
-      // error is in the store and shown below
+      await loginMicrosoft()
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
     }
   }
 
   return (
-    <Modal isOpen={open} onClose={onClose} size="md" showCloseButton>
-      <div className="flex flex-col items-center gap-5 py-2 text-center">
-        <div className="relative">
-          <div className="absolute -inset-3 rounded-[28px] bg-primary-400/20 blur-xl" />
-          <LogoTile className="relative h-20 w-20 !rounded-[24px]" markClassName="h-full w-full" />
-        </div>
-        <div>
-          <p className="eyebrow">First run</p>
-          <h2 className="mt-1 font-display text-2xl font-bold tracking-tight text-white">
-            Welcome to DontCam Client
-          </h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Add an account to start playing Minecraft.
+    <Modal isOpen={open} onClose={onClose} title="Welcome to DontCam Client" description="Add an account to start playing.">
+      <div className="space-y-5">
+        <div className="flex items-center gap-3">
+          <LogoTile className="h-12 w-12 !rounded-2xl" markClassName="h-full w-full" />
+          <p className="text-sm text-slate-400">
+            Offline accounts work instantly. Microsoft accounts open a browser login with a local callback.
           </p>
         </div>
 
-        <div className="w-full flex flex-col gap-3">
-          <button
-            onClick={() => void handleMicrosoft()}
-            disabled={isLoading}
-            className="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 rounded-2xl bg-green-600 hover:bg-green-500 active:scale-[0.99] text-white font-display font-bold tracking-wide shadow-[0_0_28px_rgba(22,163,74,0.45)] transition-all disabled:opacity-60"
-          >
-            {isLoading ? (
-              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
-              <ShieldCheck className="h-5 w-5" />
-            )}
-            Continue with Microsoft
-          </button>
-
-          {!showOffline ? (
-            <button
-              onClick={() => setShowOffline(true)}
-              className="text-sm font-semibold text-slate-400 underline decoration-white/20 underline-offset-4 transition-colors hover:text-primary-300"
-            >
-              or continue offline
-            </button>
-          ) : (
-            <div className="flex flex-col gap-2 pt-1">
-              <Input
-                placeholder="Username (letters, numbers, _)"
-                value={username}
-                maxLength={16}
-                onChange={(e) => setUsername(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleOffline()
-                }}
-              />
-              <Button onClick={() => void handleOffline()} disabled={!username.trim()} loading={isLoading}>
-                Add offline account
-              </Button>
-            </div>
-          )}
+        <div className="space-y-3">
+          <Input
+            label="Offline username"
+            placeholder="Steve"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void doOffline()
+            }}
+            autoFocus
+          />
+          <Button className="w-full" onClick={() => void doOffline()} disabled={!username.trim()} loading={busy === 'offline'}>
+            <UserPlus className="h-4 w-4 mr-2" /> Continue offline
+          </Button>
         </div>
 
-        {error && (
-          <p className="break-words text-sm text-red-400">{error}</p>
-        )}
-        <p className="text-xs leading-relaxed text-slate-500">
-          Offline works on non-premium servers. Microsoft is required for premium servers and the owner crown.
-        </p>
+        <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.2em] text-slate-600">
+          <span className="h-px flex-1 bg-white/10" /> or <span className="h-px flex-1 bg-white/10" />
+        </div>
+
+        <Button variant="secondary" className="w-full" onClick={() => void doMicrosoft()} loading={busy === 'microsoft'}>
+          <MonitorSmartphone className="h-4 w-4 mr-2" /> Login with Microsoft
+        </Button>
+
+        {error && <div className="alert alert-red">{error}</div>}
       </div>
     </Modal>
   )
