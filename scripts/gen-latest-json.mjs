@@ -53,7 +53,9 @@ for (const [key, file] of Object.entries({ 'windows-x86_64': nsis ?? msi })) {
     process.exit(1)
   }
   const signature = readFileSync(sigFile, 'utf8').trim()
-  const name = file.split(/[/\\]/).pop()
+  // GitHub replaces spaces with dots in release asset names on upload —
+  // use the same name in the URL or the updater gets a 404.
+  const name = file.split(/[/\\]/).pop().replace(/ /g, '.')
   platforms[key] = {
     signature,
     url: `${baseUrl}/${tag}/${name}`,
